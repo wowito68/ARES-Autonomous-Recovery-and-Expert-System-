@@ -1,0 +1,1 @@
+ACTION=="add|change", SUBSYSTEM=="block", TAG+="systemd", ENV{SYSTEMD_WANTS}+="ares-block-readonly@%k.service"

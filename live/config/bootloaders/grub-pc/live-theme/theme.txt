@@ -1,0 +1,36 @@
+desktop-image: "../splash.png"
+title-color: "#F8FAFC"
+title-font: "Unifont Regular 18"
+title-text: "ARES OS | Autonomous Recovery and Expert System"
+message-font: "Unifont Regular 16"
+message-color: "#94A3B8"
+
++ boot_menu {
+    left = 12%
+    width = 76%
+    top = 46%
+    height = 38%
+    item_color = "#CBD5E1"
+    item_font = "Unifont Regular 16"
+    selected_item_color = "#22D3EE"
+    selected_item_font = "Unifont Regular 16"
+    item_height = 18
+    item_padding = 2
+    item_spacing = 6
+    icon_width = 0
+    icon_height = 0
+}
+
++ progress_bar {
+    id = "__timeout__"
+    left = 20%
+    top = 90%
+    height = 16
+    width = 60%
+    font = "Unifont Regular 14"
+    text_color = "#07111F"
+    fg_color = "#22D3EE"
+    bg_color = "#102033"
+    border_color = "#22D3EE"
+    text = "@TIMEOUT_NOTIFICATION_LONG@"
+}

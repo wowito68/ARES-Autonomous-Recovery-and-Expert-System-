@@ -1,0 +1,16 @@
+[Unit]
+Description=Resolve the requested ARES runtime axes
+Documentation=file:/usr/share/doc/ares-os/live-system.md
+After=systemd-tmpfiles-setup.service
+Before=ares-state-setup.service ares-host-protect.service ares-network-policy.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/ares/ares-mode-setup
+RemainAfterExit=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/run/ares
+

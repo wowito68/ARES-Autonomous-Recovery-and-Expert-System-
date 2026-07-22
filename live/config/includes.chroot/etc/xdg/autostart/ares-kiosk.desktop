@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=ARES OS Interface
+Comment=Starts the local ARES interface through the user service manager
+Exec=systemctl --user start ares-kiosk.service
+OnlyShowIn=XFCE;
+X-GNOME-Autostart-enabled=true
+Terminal=false

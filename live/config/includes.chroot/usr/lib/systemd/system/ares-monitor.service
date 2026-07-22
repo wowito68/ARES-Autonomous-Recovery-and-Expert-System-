@@ -1,0 +1,23 @@
+[Unit]
+Description=ARES local health monitor
+Documentation=file:/usr/share/doc/ares-os/live-system.md
+ConditionFileIsExecutable=/opt/ares/monitor/bin/ares-monitor
+Wants=ares-hardware.service
+After=ares-hardware.service
+
+[Service]
+Type=notify
+User=ares-monitor
+Group=ares-monitor
+ExecStart=/opt/ares/monitor/bin/ares-monitor
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+CapabilityBoundingSet=
+ReadOnlyPaths=/run/ares
+ReadWritePaths=/var/lib/ares/monitor /run/ares/monitor
+IPAddressDeny=any

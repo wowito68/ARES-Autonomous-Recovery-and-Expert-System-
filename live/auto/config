@@ -1,0 +1,61 @@
+#!/bin/sh
+set -eu
+
+: "${ARES_VERSION:?ARES_VERSION is required}"
+: "${ARES_DEBIAN_CODENAME:?ARES_DEBIAN_CODENAME is required}"
+: "${ARES_DEBIAN_SNAPSHOT:?ARES_DEBIAN_SNAPSHOT is required}"
+: "${ARES_SECURITY_SNAPSHOT:?ARES_SECURITY_SNAPSHOT is required}"
+: "${ARES_ARCH:?ARES_ARCH is required}"
+
+debian_mirror="http://snapshot.debian.org/archive/debian/${ARES_DEBIAN_SNAPSHOT}"
+security_mirror="http://snapshot.debian.org/archive/debian-security/${ARES_SECURITY_SNAPSHOT}"
+
+lb config noauto \
+    --ignore-system-defaults \
+    --mode debian \
+    --system live \
+    --distribution "${ARES_DEBIAN_CODENAME}" \
+    --architecture "${ARES_ARCH}" \
+    --linux-flavours amd64 \
+    --binary-image iso-hybrid \
+    --image-name ares-live-amd64 \
+    --initramfs live-boot \
+    --initsystem systemd \
+    --build-with-chroot true \
+    --chroot-filesystem squashfs \
+    --chroot-squashfs-compression-type "${ARES_SQUASHFS_COMPRESSION:-xz}" \
+    --dm-verity \
+    --bootloaders "syslinux grub-efi" \
+    --uefi-secure-boot enable \
+    --debian-installer none \
+    --archive-areas "main contrib non-free-firmware" \
+    --firmware-chroot false \
+    --firmware-binary false \
+    --apt apt \
+    --apt-secure true \
+    --apt-recommends false \
+    --apt-indices false \
+    --apt-source-archives false \
+    --backports false \
+    --security true \
+    --updates true \
+    --checksums sha256 \
+    --memtest none \
+    --interactive false \
+    --source false \
+    --zsync false \
+    --win32-loader false \
+    --loadlin false \
+    --mirror-bootstrap "${debian_mirror}" \
+    --mirror-chroot "${debian_mirror}" \
+    --mirror-chroot-security "${security_mirror}" \
+    --mirror-binary "${debian_mirror}" \
+    --mirror-binary-security "${security_mirror}" \
+    --iso-application "ARES OS ${ARES_VERSION}" \
+    --iso-preparer "ARES Project / live-build ${ARES_LIVE_BUILD_VERSION}" \
+    --iso-publisher "ARES Project" \
+    --iso-volume "ARES_OS_AMD64" \
+    --utc-time true \
+    --bootappend-live "boot=live components live-config.nocomponents=sudo,policykit username=ares hostname=ares user-fullname=ARES user-default-groups=audio,video,ares-operators locales=es_MX.UTF-8,en_US.UTF-8 keyboard-layouts=latam timezone=America/Mexico_City utc=yes nopersistence noresume noeject nottyautologin systemd.gpt_auto=0 rd.systemd.gpt_auto=0 systemd.swap=0 overlay-size=50% splash ares.mode=live ares.retention=ephemeral ares.network=off dm-verity-oncorruption=restart" \
+    --bootappend-live-failsafe "boot=live components live-config.nocomponents=sudo,policykit username=ares hostname=ares user-default-groups=audio,video,ares-operators locales=es_MX.UTF-8 keyboard-layouts=latam timezone=America/Mexico_City utc=yes nopersistence noresume noeject nottyautologin systemd.gpt_auto=0 rd.systemd.gpt_auto=0 systemd.swap=0 ares.mode=recovery ares.retention=ephemeral ares.network=off nomodeset dm-verity-oncorruption=restart" \
+    "$@"

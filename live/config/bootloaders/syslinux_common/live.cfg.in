@@ -1,0 +1,30 @@
+label ares-live-@FLAVOUR@
+	menu label ^ARES OS - Live efimero
+	menu default
+	linux @LINUX@
+	initrd @INITRD@
+	append @APPEND_LIVE@ ares.mode=live ares.retention=ephemeral
+
+label ares-persistent-@FLAVOUR@
+	menu label ARES OS - ^Persistencia cifrada
+	linux @LINUX@
+	initrd @INITRD@
+	append @APPEND_LIVE@ ares.mode=recovery ares.retention=persistent
+
+label ares-forensic-@FLAVOUR@
+	menu label ARES OS - ^Forense solo lectura
+	linux @LINUX@
+	initrd @INITRD@
+	append @APPEND_LIVE@ ares.mode=forensic ares.retention=ephemeral ares.network=off
+
+label ares-recovery-@FLAVOUR@
+	menu label ARES OS - ^Recuperacion
+	linux @LINUX@
+	initrd @INITRD@
+	append @APPEND_LIVE@ ares.mode=recovery ares.retention=ephemeral
+
+label ares-safe-graphics-@FLAVOUR@
+	menu label ARES OS - Graficos ^seguros
+	linux @LINUX@
+	initrd @INITRD@
+	append @APPEND_LIVE_FAILSAFE@ ares.mode=recovery ares.retention=ephemeral nomodeset

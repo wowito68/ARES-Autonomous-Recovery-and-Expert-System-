@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2560" height="1440" viewBox="0 0 2560 1440">
+  <defs>
+    <radialGradient id="glow" cx="0.72" cy="0.34" r="0.72">
+      <stop offset="0" stop-color="#164E63"/>
+      <stop offset="0.42" stop-color="#0B2436"/>
+      <stop offset="1" stop-color="#07111F"/>
+    </radialGradient>
+    <pattern id="grid" width="80" height="80" patternUnits="userSpaceOnUse">
+      <path d="M80 0H0V80" fill="none" stroke="#1B3A50" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="2560" height="1440" fill="url(#glow)"/>
+  <rect width="2560" height="1440" fill="url(#grid)" opacity="0.35"/>
+  <circle cx="1900" cy="500" r="355" fill="none" stroke="#22D3EE" stroke-width="7" opacity="0.28"/>
+  <circle cx="1900" cy="500" r="280" fill="none" stroke="#22D3EE" stroke-width="3" stroke-dasharray="42 23" opacity="0.45"/>
+  <path d="M1900 248 2144 676 2054 676 1900 402 1746 676 1656 676Z" fill="#22D3EE"/>
+  <path d="M1900 445 2012 643 1956 643 1900 544 1844 643 1788 643Z" fill="#07111F"/>
+  <rect x="1760" y="692" width="280" height="38" rx="19" fill="#F8FAFC"/>
+  <text x="170" y="1065" font-family="DejaVu Sans" font-size="112" font-weight="700" fill="#F8FAFC">ARES OS</text>
+  <text x="176" y="1138" font-family="DejaVu Sans" font-size="28" letter-spacing="8" fill="#22D3EE">AUTONOMOUS RECOVERY AND EXPERT SYSTEM</text>
+  <rect x="176" y="1178" width="760" height="3" fill="#22D3EE"/>
+  <text x="176" y="1235" font-family="DejaVu Sans" font-size="25" fill="#94A3B8">Diagnóstico local · Recuperación controlada · Evidencia verificable</text>
+</svg>

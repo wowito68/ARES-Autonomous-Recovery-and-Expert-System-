@@ -1,0 +1,19 @@
+[Unit]
+Description=ARES trusted local consent agent
+ConditionFileIsExecutable=/opt/ares/consent/bin/ares-consent-agent
+Requires=ares-audit.service
+After=ares-audit.service systemd-user-sessions.service
+
+[Service]
+Type=notify
+User=ares-consent
+Group=ares-consent
+ExecStart=/opt/ares/consent/bin/ares-consent-agent
+Restart=on-failure
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/ares/consent /run/ares/sockets
+IPAddressDeny=any

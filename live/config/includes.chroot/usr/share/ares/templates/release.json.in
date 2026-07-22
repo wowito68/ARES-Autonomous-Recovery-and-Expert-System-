@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "product": "ARES OS",
+  "version": "@ARES_VERSION@",
+  "channel": "@ARES_CHANNEL@",
+  "build_id": "@ARES_BUILD_ID@",
+  "git_commit": "@ARES_GIT_COMMIT@",
+  "source_date_epoch": @ARES_SOURCE_DATE_EPOCH@,
+  "base": {
+    "distribution": "Debian",
+    "version": "@ARES_DEBIAN_POINT@",
+    "codename": "@ARES_DEBIAN_CODENAME@"
+  },
+  "implemented_scope": "live-platform",
+  "integrity_claim": "development-partial"
+}

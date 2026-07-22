@@ -1,0 +1,17 @@
+[Unit]
+Description=Apply ARES host-storage protection
+Documentation=file:/usr/share/doc/ares-os/live-system.md
+Requires=ares-mode.service
+After=ares-mode.service systemd-udev-trigger.service
+Before=ares-preflight.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/ares/ares-host-protect
+RemainAfterExit=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/run/ares
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SYS_RAWIO
+

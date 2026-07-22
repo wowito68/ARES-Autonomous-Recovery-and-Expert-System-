@@ -1,0 +1,13 @@
+flowchart TD
+    startNode[Encendido] --> firmwareChoice{Tipo de firmware}
+    firmwareChoice -->|BIOS| biosLoader[MBR El Torito e ISOLINUX]
+    firmwareChoice -->|UEFI| shimLoader[shim y GRUB EFI firmados]
+    biosLoader --> bootMenu[Menu de perfiles ARES]
+    shimLoader --> bootMenu
+    bootMenu --> kernelStage[Kernel e initramfs]
+    kernelStage --> liveBoot[live-boot localiza el medio]
+    liveBoot --> verityLayer[SquashFS sobre dm-verity]
+    verityLayer --> overlayLayer[OverlayFS con upper tmpfs]
+    overlayLayer --> systemdStage[systemd y preflight ARES]
+    systemdStage --> hardwareStage[Inventario de hardware]
+    systemdStage --> sessionStage[LightDM, Xfce y kiosco local]

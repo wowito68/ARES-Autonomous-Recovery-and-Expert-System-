@@ -1,0 +1,43 @@
+ARG DEBIAN_IMAGE=debian:13.6-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+FROM ${DEBIAN_IMAGE}
+
+ARG DEBIAN_SNAPSHOT=20260720T000000Z
+ARG SECURITY_SNAPSHOT=20260720T000000Z
+ARG LIVE_BUILD_VERSION=1:20250505+deb13u1
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
+RUN set -eux; \
+    sed -i "s|http://deb.debian.org/debian-security|http://snapshot.debian.org/archive/debian-security/${SECURITY_SNAPSHOT}|" /etc/apt/sources.list.d/debian.sources; \
+    sed -i "s|http://deb.debian.org/debian|http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|" /etc/apt/sources.list.d/debian.sources; \
+    printf '%s\n' 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99ares-snapshot; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        cryptsetup-bin \
+        debootstrap \
+        dosfstools \
+        file \
+        fonts-dejavu-core \
+        grub-efi-amd64-bin \
+        grub-efi-amd64-signed \
+        grub-pc-bin \
+        isolinux \
+        jq \
+        librsvg2-bin \
+        live-build="${LIVE_BUILD_VERSION}" \
+        mtools \
+        shim-signed \
+        squashfs-tools \
+        syslinux-common \
+        xorriso \
+        xz-utils \
+        zstd; \
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/*
+
+LABEL org.opencontainers.image.title="ARES OS live-build environment" \
+      org.opencontainers.image.description="Pinned Debian 13 builder for ARES OS" \
+      org.opencontainers.image.version="${LIVE_BUILD_VERSION}"

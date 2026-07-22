@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=ARES OS
+Description=ARES OS boot and encrypted-volume prompt theme
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/ares
+ScriptFile=/usr/share/plymouth/themes/ares/ares.script

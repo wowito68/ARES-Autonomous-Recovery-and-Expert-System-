@@ -1,0 +1,15 @@
+[Unit]
+Description=ARES local kiosk browser
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=exec
+ExecStart=/usr/lib/ares/ares-kiosk-launch
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

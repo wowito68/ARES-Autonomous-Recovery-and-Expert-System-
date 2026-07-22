@@ -1,0 +1,20 @@
+[Unit]
+Description=Measure the effective ARES boot-integrity state
+Documentation=file:/usr/share/doc/ares-os/live-system.md
+After=ares-mode.service
+Before=ares-preflight.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/ares/ares-boot-integrity
+RemainAfterExit=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+PrivateTmp=yes
+ReadWritePaths=/run/ares
+RestrictAddressFamilies=AF_UNIX
+

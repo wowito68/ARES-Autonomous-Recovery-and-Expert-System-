@@ -1,0 +1,23 @@
+[Unit]
+Description=ARES local frontend server
+Documentation=file:/usr/share/doc/ares-os/live-system.md
+ConditionFileIsExecutable=/opt/ares/frontend/bin/ares-frontend
+Wants=ares-backend.service
+After=ares-backend.service
+
+[Service]
+Type=notify
+User=ares-api
+Group=ares-api
+ExecStart=/opt/ares/frontend/bin/ares-frontend
+Restart=on-failure
+RestartSec=2s
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost

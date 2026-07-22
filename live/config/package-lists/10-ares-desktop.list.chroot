@@ -1,0 +1,16 @@
+adwaita-icon-theme
+dbus-x11
+firefox-esr
+fonts-dejavu-core
+lightdm
+lightdm-gtk-greeter
+thunar
+xfce4-session
+xfce4-settings
+xfconf
+xfdesktop4
+xfwm4
+xinit
+xserver-xorg-core
+xserver-xorg-input-libinput
+xserver-xorg-video-all

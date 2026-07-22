@@ -1,0 +1,14 @@
+NAME="ARES OS"
+PRETTY_NAME="ARES OS @ARES_VERSION@ (Debian @ARES_DEBIAN_POINT@ Trixie Live)"
+ID=ares
+ID_LIKE=debian
+VERSION="@ARES_VERSION@ (@ARES_CHANNEL@)"
+VERSION_ID="@ARES_VERSION@"
+VERSION_CODENAME=@ARES_DEBIAN_CODENAME@
+BUILD_ID="@ARES_BUILD_ID@"
+IMAGE_ID=ares-live
+IMAGE_VERSION="@ARES_VERSION@"
+VARIANT="Live"
+VARIANT_ID=live
+HOME_URL="file:///usr/share/doc/ares-os/"
+SUPPORT_URL="file:///usr/share/doc/ares-os/live-system.md"

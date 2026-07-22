@@ -1,0 +1,33 @@
+[Unit]
+Description=ARES local API backend
+Documentation=file:/usr/share/doc/ares-os/live-system.md
+ConditionFileIsExecutable=/opt/ares/backend/bin/ares-api
+Wants=ares-hardware.service ares-audit.service
+After=ares-hardware.service ares-audit.service
+
+[Service]
+Type=notify
+User=ares-api
+Group=ares-api
+ExecStart=/opt/ares/backend/bin/ares-api
+Restart=on-failure
+RestartSec=2s
+TimeoutStartSec=30s
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+UMask=0077
+ReadOnlyPaths=/run/ares/hardware/public
+ReadWritePaths=/var/lib/ares /run/ares/api
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost

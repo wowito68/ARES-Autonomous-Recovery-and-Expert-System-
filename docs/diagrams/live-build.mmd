@@ -1,0 +1,13 @@
+flowchart LR
+    sourceTree[Fuentes versionadas] --> sourceCheck[Validacion estatica]
+    releaseFile[release.env] --> builderImage[Constructor Debian fijado]
+    snapshotRepo[Snapshots APT firmados] --> builderImage
+    sourceCheck --> workTree[Workspace temporal limpio]
+    builderImage --> workTree
+    workTree --> liveConfig[lb config y validacion]
+    liveConfig --> bootstrapStage[Bootstrap Debian]
+    bootstrapStage --> chrootStage[Paquetes, includes y hooks]
+    chrootStage --> binaryStage[SquashFS, verity y bootloaders]
+    binaryStage --> isoArtifact[ARES.iso]
+    isoArtifact --> releaseData[SHA-256, manifest y paquetes]
+    releaseData --> vmTests[BIOS, UEFI y pruebas de seguridad]

@@ -1,0 +1,29 @@
+[Unit]
+Description=ARES bounded local agent
+Documentation=file:/usr/share/doc/ares-os/live-system.md
+ConditionFileIsExecutable=/opt/ares/agent/bin/ares-agent
+Wants=ares-backend.service ares-llm.service
+After=ares-backend.service ares-llm.service
+
+[Service]
+Type=notify
+User=ares-agent
+Group=ares-agent
+ExecStart=/opt/ares/agent/bin/ares-agent
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/ares/agent /run/ares/agent
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost

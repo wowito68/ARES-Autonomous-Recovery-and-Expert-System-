@@ -1,0 +1,25 @@
+#!/bin/sh
+set -eu
+
+# shellcheck disable=SC1091
+. /run/ares/mode.env
+
+if [ "${ARES_NETWORK}" = "off" ]; then
+    effective=off
+    reason=boot_policy
+else
+    # Scoped connectivity is intentionally fail-closed until the capability
+    # broker and its bounded nftables transactions are implemented.
+    effective=off
+    reason=scoped_networking_not_implemented
+fi
+
+if ! nft list table inet ares_filter >/dev/null 2>&1; then
+    effective=off
+    reason=firewall_policy_unavailable
+fi
+
+printf '{"schema_version":1,"requested":"%s","effective":"%s","reason":"%s","automatic_connections":false}\n' \
+    "${ARES_NETWORK}" "${effective}" "${reason}" > /run/ares/state/network.json.tmp
+mv -f /run/ares/state/network.json.tmp /run/ares/state/network.json
+chmod 0644 /run/ares/state/network.json

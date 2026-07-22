@@ -1,0 +1,24 @@
+#!/bin/sh
+set -eu
+
+while read -r device device_type; do
+    case "${device_type}" in
+        disk|part|crypt|lvm|raid*) ;;
+        *) continue ;;
+    esac
+    case "${device}" in
+        /dev/*) ;;
+        *) continue ;;
+    esac
+    if [ -b "${device}" ]; then
+        timeout 3 blockdev --setro "${device}"
+        if [ "$(blockdev --getro "${device}")" != "1" ]; then
+            printf 'Unable to enforce read-only mode on %s\n' "${device}" >&2
+            exit 1
+        fi
+    fi
+done <<EOF
+$(lsblk --paths --noheadings --output NAME,TYPE)
+EOF
+
+udevadm control --reload-rules

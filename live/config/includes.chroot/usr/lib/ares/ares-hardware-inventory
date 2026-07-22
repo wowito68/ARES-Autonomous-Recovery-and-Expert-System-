@@ -1,0 +1,358 @@
+#!/usr/bin/python3
+from __future__ import annotations
+
+import concurrent.futures
+import datetime as dt
+import grp
+import hashlib
+import hmac
+import json
+import os
+import pathlib
+import pwd
+import re
+import shutil
+import subprocess
+import tempfile
+from collections.abc import Callable
+from typing import Any
+
+
+SCHEMA = "file:///usr/share/ares/schemas/hardware-v1.schema.json"
+OUTPUT_ROOT = pathlib.Path(os.environ.get("ARES_HARDWARE_OUTPUT_ROOT", "/run/ares/hardware"))
+PRIVATE_OUTPUT = OUTPUT_ROOT / "private/inventory-v1.json"
+PUBLIC_OUTPUT = OUTPUT_ROOT / "public/inventory-v1.json"
+MAX_COMMAND_OUTPUT = 1_048_576
+MAX_STRING = 8_192
+CONTROL_CHARACTERS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+SENSITIVE_KEYS = {
+    "address",
+    "addresses",
+    "boot_id",
+    "host",
+    "hostname",
+    "ip",
+    "label",
+    "mac",
+    "local",
+    "broadcast",
+    "partlabel",
+    "partuuid",
+    "product_serial",
+    "product_uuid",
+    "serial",
+    "uuid",
+    "wwn",
+}
+
+
+def clean_text(value: str, limit: int = MAX_STRING) -> str:
+    value = CONTROL_CHARACTERS.sub("", value)
+    if len(value) > limit:
+        return value[:limit] + "…"
+    return value
+
+
+def normalize(value: Any) -> Any:
+    if isinstance(value, str):
+        return clean_text(value)
+    if isinstance(value, list):
+        return [normalize(item) for item in value]
+    if isinstance(value, dict):
+        return {clean_text(str(key), 128): normalize(item) for key, item in value.items()}
+    return value
+
+
+def run_command(binary: str, arguments: list[str], *, parse_json: bool = False, timeout: float = 3.0) -> dict[str, Any]:
+    executable = shutil.which(binary)
+    if executable is None:
+        return {"status": "unavailable"}
+    try:
+        completed = subprocess.run(
+            [executable, *arguments],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C", "LANG": "C"},
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return {"status": "timeout"}
+    except OSError:
+        return {"status": "unavailable"}
+
+    raw = completed.stdout[:MAX_COMMAND_OUTPUT]
+    decoded = CONTROL_CHARACTERS.sub("", raw.decode("utf-8", errors="replace"))
+    if completed.returncode != 0:
+        status = "permission_denied" if completed.returncode in {1, 13, 77} else "partial"
+        return {"status": status, "returncode": completed.returncode}
+
+    if parse_json:
+        try:
+            data = json.loads(decoded)
+        except json.JSONDecodeError:
+            return {"status": "partial", "reason": "invalid_json"}
+    else:
+        data = clean_text(decoded).splitlines()
+    return {"status": "ok", "data": normalize(data), "truncated": len(completed.stdout) > MAX_COMMAND_OUTPUT}
+
+
+def read_text(path: pathlib.Path, limit: int = 4_096) -> str | None:
+    try:
+        return clean_text(path.read_text(encoding="utf-8", errors="replace").strip(), limit)
+    except OSError:
+        return None
+
+
+def read_json(path: pathlib.Path) -> dict[str, Any] | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def memory_probe() -> dict[str, Any]:
+    values: dict[str, int | str] = {}
+    try:
+        for line in pathlib.Path("/proc/meminfo").read_text(encoding="ascii").splitlines():
+            key, raw = line.split(":", 1)
+            fields = raw.strip().split()
+            if fields and fields[0].isdigit():
+                multiplier = 1024 if len(fields) > 1 and fields[1] == "kB" else 1
+                values[key] = int(fields[0]) * multiplier
+            else:
+                values[key] = clean_text(raw.strip())
+    except (OSError, ValueError):
+        return {"status": "unavailable"}
+    return {"status": "ok", "data": {"unit": "bytes", "meminfo": values}}
+
+
+def dmi_probe() -> dict[str, Any]:
+    root = pathlib.Path("/sys/class/dmi/id")
+    keys = (
+        "bios_date",
+        "bios_vendor",
+        "bios_version",
+        "board_name",
+        "board_serial",
+        "board_vendor",
+        "board_version",
+        "product_name",
+        "product_serial",
+        "product_uuid",
+        "product_version",
+        "sys_vendor",
+    )
+    data = {key: value for key in keys if (value := read_text(root / key)) is not None}
+    return {"status": "ok" if data else "unavailable", "data": data}
+
+
+def power_probe() -> dict[str, Any]:
+    root = pathlib.Path("/sys/class/power_supply")
+    entries: list[dict[str, str]] = []
+    keys = (
+        "type",
+        "status",
+        "present",
+        "capacity",
+        "capacity_level",
+        "energy_full",
+        "energy_full_design",
+        "energy_now",
+        "manufacturer",
+        "model_name",
+        "serial_number",
+        "technology",
+        "voltage_now",
+    )
+    for device in sorted(root.glob("*"))[:32]:
+        item = {"name": device.name}
+        for key in keys:
+            value = read_text(device / key)
+            if value is not None:
+                item[key] = value
+        entries.append(item)
+    return {"status": "ok" if entries else "unavailable", "data": entries}
+
+
+def thermal_probe() -> dict[str, Any]:
+    zones: list[dict[str, str]] = []
+    for zone in sorted(pathlib.Path("/sys/class/thermal").glob("thermal_zone*"))[:64]:
+        item = {"name": zone.name}
+        for key in ("type", "temp", "mode", "policy"):
+            value = read_text(zone / key)
+            if value is not None:
+                item[key] = value
+        zones.append(item)
+    return {"status": "ok" if zones else "unavailable", "data": zones, "temperature_unit": "millicelsius"}
+
+
+def efi_probe() -> dict[str, Any]:
+    firmware = "uefi" if pathlib.Path("/sys/firmware/efi").exists() else "bios"
+    result: dict[str, Any] = {"status": "ok", "data": {"firmware": firmware}}
+    if firmware == "uefi":
+        result["data"]["secure_boot_probe"] = run_command("mokutil", ["--sb-state"], timeout=2.0)
+        result["data"]["boot_entries"] = run_command("efibootmgr", ["-v"], timeout=2.0)
+    return result
+
+
+def platform_probe() -> dict[str, Any]:
+    uname = os.uname()
+    return {
+        "status": "ok",
+        "data": {
+            "sysname": uname.sysname,
+            "release": uname.release,
+            "version": uname.version,
+            "machine": uname.machine,
+            "boot_id": read_text(pathlib.Path("/proc/sys/kernel/random/boot_id")),
+        },
+    }
+
+
+PROBES: dict[str, Callable[[], dict[str, Any]]] = {
+    "platform": platform_probe,
+    "cpu": lambda: run_command("lscpu", ["--json", "--bytes"], parse_json=True),
+    "memory": memory_probe,
+    "dmi": dmi_probe,
+    "storage": lambda: run_command(
+        "lsblk",
+        [
+            "--json",
+            "--bytes",
+            "--properties-by",
+            "udev,none",
+            "--output",
+            "NAME,KNAME,PATH,TYPE,SIZE,RO,RM,MODEL,VENDOR,SERIAL,WWN,TRAN,FSTYPE,FSVER,LABEL,UUID,PARTUUID,PARTLABEL,MOUNTPOINTS,PKNAME,MAJ:MIN",
+        ],
+        parse_json=True,
+    ),
+    "mounts": lambda: run_command("findmnt", ["--json", "--bytes"], parse_json=True),
+    "pci": lambda: run_command("lspci", ["-D", "-mm", "-nn", "-k"]),
+    "usb": lambda: run_command("lsusb", []),
+    "network_links": lambda: run_command("ip", ["-j", "-details", "link", "show"], parse_json=True),
+    "network_addresses": lambda: run_command("ip", ["-j", "address", "show"], parse_json=True),
+    "wifi": lambda: run_command("iw", ["dev"], timeout=2.0),
+    "rfkill": lambda: run_command("rfkill", ["--json"], parse_json=True, timeout=2.0),
+    "bluetooth": lambda: run_command("bluetoothctl", ["list"], timeout=2.0),
+    "smart_devices": lambda: run_command("smartctl", ["--scan"], timeout=3.0),
+    "nvme": lambda: {
+        "status": "skipped_policy",
+        "reason": "controller commands are deferred to avoid opening storage devices during boot",
+    },
+    "sensors": lambda: run_command("sensors", ["-j"], parse_json=True, timeout=3.0),
+    "power": power_probe,
+    "thermal": thermal_probe,
+    "efi": efi_probe,
+    "modules": lambda: run_command("lsmod", []),
+}
+
+
+def redact(value: Any, key: bytes, parent_key: str = "") -> Any:
+    if isinstance(value, dict):
+        return {item_key: redact(item_value, key, item_key.lower()) for item_key, item_value in value.items()}
+    if isinstance(value, list):
+        return [redact(item, key, parent_key) for item in value]
+    normalized_key = parent_key.replace("-", "_").lower()
+    if value is not None and any(token in normalized_key for token in SENSITIVE_KEYS):
+        digest = hmac.new(key, str(value).encode("utf-8", errors="replace"), hashlib.sha256).hexdigest()[:20]
+        return f"hmac:{digest}"
+    return value
+
+
+def atomic_json(path: pathlib.Path, payload: dict[str, Any], user: str, group: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o640)
+        try:
+            os.chown(temporary, pwd.getpwnam(user).pw_uid, grp.getgrnam(group).gr_gid)
+        except KeyError:
+            pass
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+
+def main() -> int:
+    results: dict[str, dict[str, Any]] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="ares-probe") as executor:
+        pending = {executor.submit(probe): name for name, probe in PROBES.items()}
+        for future in concurrent.futures.as_completed(pending):
+            name = pending[future]
+            try:
+                results[name] = future.result()
+            except Exception:
+                results[name] = {"status": "partial", "reason": "probe_exception"}
+
+    essential = ("cpu", "memory", "storage", "network_links")
+    status = "ok" if all(results.get(name, {}).get("status") == "ok" for name in essential) else "partial"
+    errors = [
+        {"probe": name, "status": result.get("status", "partial")}
+        for name, result in sorted(results.items())
+        if result.get("status") not in {"ok", "unavailable"}
+    ]
+    mode = read_text(pathlib.Path("/run/ares/mode")) or "unknown"
+    integrity = read_json(pathlib.Path("/run/ares/integrity.json")) or {}
+    private_payload: dict[str, Any] = {
+        "$schema": SCHEMA,
+        "schema_version": 1,
+        "generation": 1,
+        "generated_at": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+        "status": status,
+        "boot": {
+            "mode": mode,
+            "firmware": integrity.get("firmware", "unknown"),
+            "secure_boot": integrity.get("secure_boot", "unknown"),
+            "integrity_trust": integrity.get("trust", "unknown"),
+        },
+        "probes": dict(sorted(results.items())),
+        "smart_health": {
+            "status": "skipped_policy",
+            "reason": "deep SMART reads are deferred to avoid waking disks during boot",
+        },
+        "errors": errors,
+    }
+    redaction_key = os.urandom(32)
+    public_payload = redact(private_payload, redaction_key)
+    public_probes = public_payload.get("probes", {})
+    if isinstance(public_probes, dict):
+        for probe_name in ("wifi", "bluetooth"):
+            probe = public_probes.get(probe_name)
+            if isinstance(probe, dict):
+                public_probes[probe_name] = {
+                    "status": probe.get("status", "partial"),
+                    "data": "redacted",
+                }
+        efi = public_probes.get("efi")
+        if isinstance(efi, dict):
+            efi_data = efi.get("data")
+            if isinstance(efi_data, dict) and "boot_entries" in efi_data:
+                boot_entries = efi_data.get("boot_entries")
+                status = boot_entries.get("status", "partial") if isinstance(boot_entries, dict) else "partial"
+                efi_data["boot_entries"] = {"status": status, "data": "redacted"}
+    public_payload["view"] = "redacted"
+    private_payload["view"] = "private"
+
+    atomic_json(PRIVATE_OUTPUT, private_payload, "ares-hardware", "ares-hardware")
+    atomic_json(PUBLIC_OUTPUT, public_payload, "ares-hardware", "ares-api")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,14 @@
+.git
+.github
+.idea
+.vscode
+backend/.venv
+backend/.pytest_cache
+backend/.mypy_cache
+backend/.ruff_cache
+backend/htmlcov
+iso
+live/.build
+live/.cache
+**/__pycache__
+**/*.pyc

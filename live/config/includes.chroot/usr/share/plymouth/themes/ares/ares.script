@@ -1,0 +1,28 @@
+Window.SetBackgroundTopColor(0.027, 0.067, 0.122);
+Window.SetBackgroundBottomColor(0.063, 0.125, 0.200);
+
+logoImage = Image("ares-logo.png");
+logoSprite = Sprite(logoImage);
+logoSprite.SetX(Window.GetWidth() / 2 - logoImage.GetWidth() / 2);
+logoSprite.SetY(Window.GetHeight() / 2 - logoImage.GetHeight() / 2 - 42);
+
+messageSprite = Sprite();
+
+fun showMessage(text) {
+    messageImage = Image.Text(text, 0.973, 0.980, 0.988);
+    messageSprite.SetImage(messageImage);
+    messageSprite.SetX(Window.GetWidth() / 2 - messageImage.GetWidth() / 2);
+    messageSprite.SetY(Window.GetHeight() / 2 + 120);
+}
+
+fun displayPassword(prompt, bullets) {
+    showMessage(prompt + " " + bullets);
+}
+
+fun displayQuestion(prompt, entry) {
+    showMessage(prompt + " " + entry);
+}
+
+Plymouth.SetMessageFunction(showMessage);
+Plymouth.SetDisplayPasswordFunction(displayPassword);
+Plymouth.SetDisplayQuestionFunction(displayQuestion);

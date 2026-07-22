@@ -1,0 +1,16 @@
+[Unit]
+Description=Prepare ARES ephemeral or trusted persistent state
+Documentation=file:/usr/share/doc/ares-os/live-system.md
+Requires=ares-mode.service
+After=ares-mode.service local-fs.target
+Before=ares-preflight.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/ares/ares-state-setup
+RemainAfterExit=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/run/ares /var/lib/ares /var/log/ares
+

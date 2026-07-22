@@ -1,0 +1,20 @@
+[Unit]
+Description=ARES durable audit writer
+ConditionFileIsExecutable=/opt/ares/audit/bin/ares-audit-writer
+Requires=ares-state-setup.service
+After=ares-state-setup.service
+
+[Service]
+Type=notify
+User=ares-audit
+Group=ares-audit
+ExecStart=/opt/ares/audit/bin/ares-audit-writer
+Restart=on-failure
+RestartSec=2s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/ares/audit /var/log/ares /run/ares/sockets
+IPAddressDeny=any

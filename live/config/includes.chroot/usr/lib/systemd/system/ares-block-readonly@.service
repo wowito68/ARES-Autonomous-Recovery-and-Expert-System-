@@ -1,0 +1,17 @@
+[Unit]
+Description=Apply ARES forensic read-only policy to /dev/%I
+Documentation=file:/usr/share/doc/ares-os/live-system.md
+After=ares-mode.service
+Requires=ares-mode.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/ares/ares-mark-block-readonly %I
+TimeoutStartSec=5s
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+CapabilityBoundingSet=CAP_SYS_ADMIN
+DevicePolicy=closed
+DeviceAllow=/dev/%I rw

@@ -1,0 +1,17 @@
+btrfs-progs
+cryptsetup-bin
+dosfstools
+e2fsprogs
+exfatprogs
+fdisk
+grub-common
+grub-efi-amd64-bin
+grub-efi-amd64-signed
+grub-pc-bin
+ntfs-3g
+parted
+rsync
+shim-signed
+testdisk
+util-linux
+xfsprogs

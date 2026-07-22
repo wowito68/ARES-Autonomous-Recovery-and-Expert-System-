@@ -1,0 +1,17 @@
+{
+  "id": "ares",
+  "name": "ARES OS",
+  "long_name": "Autonomous Recovery and Expert System",
+  "variant": "Live",
+  "hostname": "ares",
+  "debian_codename": "trixie",
+  "palette": {
+    "background": "#07111F",
+    "surface": "#102033",
+    "primary": "#22D3EE",
+    "warning": "#F59E0B",
+    "danger": "#EF4444",
+    "text": "#F8FAFC",
+    "muted": "#94A3B8"
+  }
+}

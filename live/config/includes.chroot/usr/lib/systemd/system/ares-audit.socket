@@ -1,0 +1,13 @@
+[Unit]
+Description=ARES durable audit socket
+ConditionFileIsExecutable=/opt/ares/audit/bin/ares-audit-writer
+
+[Socket]
+ListenStream=/run/ares/sockets/audit.sock
+SocketUser=ares-audit
+SocketGroup=ares-audit-clients
+SocketMode=0660
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

@@ -1,0 +1,9 @@
+ARES OS @ARES_VERSION@ — Autonomous Recovery and Expert System
+Build: @ARES_BUILD_ID@
+
+Modo actual: /run/ares/mode
+Integridad: /run/ares/integrity.json
+Hardware: /run/ares/hardware/public/inventory-v1.json
+Documentación offline: /usr/share/doc/ares-os/
+
+Esta compilación es infraestructura de Fase 2. No contiene todavía agente ni herramientas ARES habilitadas.

@@ -1,0 +1,15 @@
+[Unit]
+Description=ARES privileged tool broker socket
+ConditionFileIsExecutable=/opt/ares/broker/bin/ares-tool-broker
+Requires=ares-audit.socket
+After=ares-audit.socket
+
+[Socket]
+ListenStream=/run/ares/sockets/broker.sock
+SocketUser=ares-broker
+SocketGroup=ares-api
+SocketMode=0660
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

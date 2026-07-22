@@ -1,0 +1,27 @@
+#!/bin/sh
+set -eu
+umask 027
+
+# shellcheck disable=SC1091
+. /run/ares/mode.env
+
+mkdir -p /run/ares/state /var/lib/ares /var/log/ares
+
+effective=ephemeral
+status=ready
+reason=ram_overlay
+
+if [ "${ARES_RETENTION}" = "persistent" ]; then
+    # Generic live-boot persistence is intentionally not enabled: a matching
+    # label on a host disk is not a sufficient device identity. Until the ARES
+    # provisioner registers a LUKS2 volume bound to this USB, fail closed and
+    # continue with ephemeral state.
+    status=degraded
+    reason=trusted_persistence_volume_not_found
+fi
+
+printf '{"schema_version":1,"requested":"%s","effective":"%s","status":"%s","reason":"%s"}\n' \
+    "${ARES_RETENTION}" "${effective}" "${status}" "${reason}" > /run/ares/state/status.json.tmp
+mv -f /run/ares/state/status.json.tmp /run/ares/state/status.json
+chmod 0640 /run/ares/state/status.json
+chown root:ares-api /run/ares/state/status.json

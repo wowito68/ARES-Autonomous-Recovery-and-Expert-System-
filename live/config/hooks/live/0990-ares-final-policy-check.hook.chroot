@@ -1,0 +1,98 @@
+#!/bin/sh
+set -eu
+
+for required in \
+    /etc/nftables.conf \
+    /usr/lib/ares/ares-boot-ready \
+    /usr/lib/ares/ares-hardware-inventory \
+    /usr/lib/ares/ares-mode-setup \
+    /usr/lib/systemd/system/ares.target \
+    /usr/share/ares/platform/index.html \
+    /usr/share/plymouth/themes/ares/ares.plymouth; do
+    if [ ! -e "${required}" ]; then
+        printf 'Required ARES runtime file is missing: %s\n' "${required}" >&2
+        exit 1
+    fi
+done
+
+for unit in ares.target ares-boot-ready.service lightdm.service nftables.service; do
+    if [ "$(systemctl is-enabled "${unit}" 2>/dev/null || true)" != enabled ]; then
+        printf 'Required boot unit is not enabled: %s\n' "${unit}" >&2
+        exit 1
+    fi
+done
+
+for unit in \
+    apt-daily.service \
+    apt-daily.timer \
+    apt-daily-upgrade.service \
+    apt-daily-upgrade.timer \
+    bluetooth.service \
+    cron.service \
+    e2scrub_all.timer \
+    e2scrub_reap.service \
+    fstrim.timer \
+    lm-sensors.service \
+    nvmefc-boot-connections.service \
+    nvmf-autoconnect.service \
+    nvmf-connect-nbft.service \
+    nvmf-connect.target \
+    nvmf-connect@.service \
+    smartmontools.service \
+    smartd.service \
+    systemd-hibernate-clear.service \
+    systemd-pstore.service \
+    systemd-timesyncd.service \
+    sleep.target \
+    suspend.target \
+    hibernate.target \
+    hybrid-sleep.target \
+    suspend-then-hibernate.target \
+    xfs_scrub_all.timer; do
+    if [ "$(systemctl is-enabled "${unit}" 2>/dev/null || true)" != masked ]; then
+        printf 'Unsafe automatic unit is not masked: %s\n' "${unit}" >&2
+        exit 1
+    fi
+done
+
+for rule in \
+    65-persistent-net-nbft.rules \
+    70-nvmf-autoconnect.rules \
+    70-nvmf-keys.rules \
+    71-nvmf-netapp.rules; do
+    if [ "$(readlink "/etc/udev/rules.d/${rule}" 2>/dev/null || true)" != /dev/null ]; then
+        printf 'Unsafe NVMe-oF udev rule is not neutralized: %s\n' "${rule}" >&2
+        exit 1
+    fi
+done
+
+if getent group disk | grep -Eq '(^|,)ares(,|$)'; then
+    printf '%s\n' 'The live user must not be a member of disk.' >&2
+    exit 1
+fi
+
+for unit in ssh.service ssh.socket sshd.service sshd.socket; do
+    case "$(systemctl is-enabled "${unit}" 2>/dev/null || true)" in
+        enabled) printf 'An SSH unit was unexpectedly enabled: %s\n' "${unit}" >&2; exit 1 ;;
+    esac
+done
+
+for path in / /etc /usr /var /var/lib; do
+    if [ "$(stat -c '%u:%g' "${path}")" != '0:0' ]; then
+        printf 'Unsafe ownership on base system path: %s\n' "${path}" >&2
+        exit 1
+    fi
+done
+
+for package in firmware-b43-installer firmware-b43legacy-installer; do
+    if dpkg-query -W -f='${db:Status-Status}' "${package}" 2>/dev/null | grep -qx installed; then
+        printf 'Network-downloading firmware package is forbidden: %s\n' "${package}" >&2
+        exit 1
+    fi
+done
+
+if find /etc/apt/sources.list.d -type f -print -quit | grep -q . || \
+   grep -Eq '^[[:space:]]*deb([[:space:]]|$)' /etc/apt/sources.list; then
+    printf '%s\n' 'A runtime network APT source remains enabled.' >&2
+    exit 1
+fi

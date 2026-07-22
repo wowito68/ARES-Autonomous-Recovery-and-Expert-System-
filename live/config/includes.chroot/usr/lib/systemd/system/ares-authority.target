@@ -1,0 +1,6 @@
+[Unit]
+Description=ARES privileged authority plane
+Documentation=file:/usr/share/doc/ares-os/live-system.md
+Wants=ares-audit.socket ares-tool-broker.socket ares-consent-agent.service
+After=ares-preflight.target ares-audit.socket ares-tool-broker.socket
+

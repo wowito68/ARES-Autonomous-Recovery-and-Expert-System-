@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "file:///usr/share/ares/schemas/hardware-v1.schema.json",
+  "title": "ARES hardware inventory v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generation",
+    "generated_at",
+    "status",
+    "boot",
+    "probes",
+    "smart_health",
+    "errors",
+    "view"
+  ],
+  "properties": {
+    "$schema": {"type": "string"},
+    "schema_version": {"const": 1},
+    "generation": {"type": "integer", "minimum": 1},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "status": {"enum": ["ok", "partial"]},
+    "view": {"enum": ["private", "redacted"]},
+    "boot": {
+      "type": "object",
+      "required": ["mode", "firmware", "secure_boot", "integrity_trust"]
+    },
+    "probes": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["status"],
+        "properties": {
+          "status": {
+            "enum": ["ok", "partial", "unavailable", "timeout", "permission_denied", "unsupported", "skipped_policy"]
+          }
+        }
+      }
+    },
+    "smart_health": {
+      "type": "object",
+      "required": ["status"]
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["probe", "status"]
+      }
+    }
+  },
+  "additionalProperties": true
+}

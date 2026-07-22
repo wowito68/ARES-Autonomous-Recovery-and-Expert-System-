@@ -1,0 +1,6 @@
+[Unit]
+Description=ARES local application plane
+Documentation=file:/usr/share/doc/ares-os/live-system.md
+Wants=ares-backend.service ares-frontend.service ares-agent.service ares-llm.service ares-monitor.service
+After=ares-preflight.target ares-hardware.service
+

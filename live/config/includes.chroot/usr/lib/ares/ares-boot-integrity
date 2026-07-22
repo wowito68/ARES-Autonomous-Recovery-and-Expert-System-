@@ -1,0 +1,92 @@
+#!/usr/bin/python3
+from __future__ import annotations
+
+import json
+import os
+import pathlib
+import subprocess
+import tempfile
+
+
+OUTPUT = pathlib.Path("/run/ares/integrity.json")
+
+
+def secure_boot_state() -> tuple[str, str]:
+    efi = pathlib.Path("/sys/firmware/efi")
+    if not efi.exists():
+        return "unavailable", "bios"
+    matches = list(pathlib.Path("/sys/firmware/efi/efivars").glob("SecureBoot-*"))
+    for match in matches:
+        try:
+            raw = match.read_bytes()
+        except OSError:
+            continue
+        if len(raw) >= 5:
+            return ("enabled" if raw[4] == 1 else "disabled"), "uefi"
+    return "unknown", "uefi"
+
+
+def verity_state() -> str:
+    try:
+        result = subprocess.run(
+            ["/usr/sbin/dmsetup", "ls", "--target", "verity"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return "unknown"
+    output = result.stdout.strip()
+    if result.returncode == 0 and output and "No devices found" not in output:
+        return "active"
+    return "inactive"
+
+
+def atomic_write(payload: dict[str, object]) -> None:
+    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix="integrity.", dir=OUTPUT.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o644)
+        os.replace(temporary, OUTPUT)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+
+secure_boot, firmware = secure_boot_state()
+verity = verity_state()
+integrity_failed = verity != "active"
+if integrity_failed:
+    trust = "FAILED"
+elif firmware == "bios":
+    trust = "UNAVAILABLE"
+elif secure_boot == "disabled":
+    trust = "DISABLED"
+elif secure_boot == "enabled" and verity == "active":
+    # Debian shim/GRUB/kernel are signed, but this development image does not
+    # yet authenticate initrd, cmdline and the verity root hash as one UKI.
+    trust = "ENFORCED_PARTIAL"
+else:
+    trust = "ENFORCED_PARTIAL" if secure_boot == "enabled" else "UNKNOWN"
+
+atomic_write(
+    {
+        "schema_version": 1,
+        "firmware": firmware,
+        "secure_boot": secure_boot,
+        "dm_verity": verity,
+        "trust": trust,
+        "full_chain": False,
+    }
+)
+raise SystemExit(1 if integrity_failed else 0)

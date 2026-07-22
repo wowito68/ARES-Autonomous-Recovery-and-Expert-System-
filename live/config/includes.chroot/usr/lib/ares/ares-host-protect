@@ -1,0 +1,28 @@
+#!/bin/sh
+set -eu
+
+swapoff --all
+if swapon --noheadings --show=NAME | grep -q .; then
+    printf '%s\n' 'ARES could not disable every swap device.' >&2
+    exit 1
+fi
+
+if [ "$(cat /run/ares/mode)" = "forensic" ]; then
+    /usr/lib/ares/ares-forensic-lockdown
+fi
+
+mkdir -p /run/ares/state
+cmdline=" $(cat /proc/cmdline) "
+for required_argument in systemd.gpt_auto=0 rd.systemd.gpt_auto=0 systemd.swap=0; do
+    case "${cmdline}" in
+        *" ${required_argument} "*) ;;
+        *)
+            printf 'Required host-storage kernel protection is missing: %s\n' "${required_argument}" >&2
+            exit 1
+            ;;
+    esac
+done
+
+printf '%s\n' '{"schema_version":1,"swap":"verified_disabled","automatic_storage_services":"masked","gpt_auto":"verified_disabled"}' > /run/ares/state/host-protection.json.tmp
+mv -f /run/ares/state/host-protection.json.tmp /run/ares/state/host-protection.json
+chmod 0644 /run/ares/state/host-protection.json

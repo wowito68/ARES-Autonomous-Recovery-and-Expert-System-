@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+[ "$(cat /run/ares/mode 2>/dev/null || true)" = "forensic" ] || exit 0
+case "${1:-}" in
+    *[!A-Za-z0-9._-]*|'') exit 1 ;;
+esac
+device="/dev/$1"
+[ -b "${device}" ] || exit 0
+timeout 3 blockdev --setro "${device}"
+[ "$(blockdev --getro "${device}")" = "1" ]

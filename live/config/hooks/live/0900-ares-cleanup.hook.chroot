@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+
+rm -f /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources
+printf '%s\n' \
+    '# ARES OS has no network package source at runtime.' \
+    '# Verified offline update packs will provide a temporary signed source.' \
+    > /etc/apt/sources.list
+
+rm -f /etc/ssh/ssh_host_* /var/lib/dbus/machine-id
+rm -f /etc/NetworkManager/system-connections/* 2>/dev/null || true
+rm -rf /var/cache/apt/archives/*.deb /var/lib/apt/lists/*
+: > /etc/machine-id
+chmod 0444 /etc/machine-id
+
+find /var/log -type f -exec truncate -s 0 {} +
+find /tmp /var/tmp -mindepth 1 -delete

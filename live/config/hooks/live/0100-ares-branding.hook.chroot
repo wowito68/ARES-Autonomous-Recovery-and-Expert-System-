@@ -1,0 +1,21 @@
+#!/bin/sh
+set -eu
+
+template=/usr/share/ares/templates/os-release
+if [ ! -f "${template}" ]; then
+    printf '%s\n' 'ARES os-release template is missing.' >&2
+    exit 1
+fi
+
+if ! dpkg-divert --list /usr/lib/os-release | grep -q .; then
+    dpkg-divert --local --rename --add /usr/lib/os-release
+fi
+install -o root -g root -m 0644 "${template}" /usr/lib/os-release
+ln -sfn /usr/lib/os-release /etc/os-release
+
+passwd --lock root >/dev/null 2>&1 || true
+printf '%s\n' 'ARES OS' > /etc/debian_chroot
+
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache --force /usr/share/icons/hicolor >/dev/null 2>&1 || true
+fi

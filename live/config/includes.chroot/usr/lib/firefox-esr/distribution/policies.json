@@ -1,0 +1,61 @@
+{
+  "policies": {
+    "AppAutoUpdate": false,
+    "DisableAppUpdate": true,
+    "DisableFirefoxAccounts": true,
+    "DisableFirefoxStudies": true,
+    "DisableFormHistory": true,
+    "DisablePocket": true,
+    "DisableProfileImport": true,
+    "DisableTelemetry": true,
+    "DNSOverHTTPS": {
+      "Enabled": false,
+      "Locked": true
+    },
+    "DontCheckDefaultBrowser": true,
+    "Homepage": {
+      "URL": "file:///usr/share/ares/platform/index.html",
+      "Locked": true,
+      "StartPage": "homepage"
+    },
+    "NetworkPrediction": false,
+    "NoDefaultBookmarks": true,
+    "OfferToSaveLogins": false,
+    "OverrideFirstRunPage": "",
+    "OverridePostUpdatePage": "",
+    "Preferences": {
+      "app.normandy.enabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "browser.safebrowsing.downloads.remote.enabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "browser.safebrowsing.provider.google.updateURL": {
+        "Value": "",
+        "Status": "locked"
+      },
+      "browser.safebrowsing.provider.mozilla.updateURL": {
+        "Value": "",
+        "Status": "locked"
+      },
+      "network.captive-portal-service.enabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "network.connectivity-service.enabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "services.settings.server": {
+        "Value": "",
+        "Status": "locked"
+      },
+      "extensions.getAddons.cache.enabled": {
+        "Value": false,
+        "Status": "locked"
+      }
+    }
+  }
+}

@@ -1,0 +1,24 @@
+[Unit]
+Description=ARES privileged tool broker
+ConditionFileIsExecutable=/opt/ares/broker/bin/ares-tool-broker
+Requires=ares-audit.service
+After=ares-audit.service
+
+[Service]
+Type=notify
+User=root
+Group=ares-broker
+ExecStart=/opt/ares/broker/bin/ares-tool-broker
+Restart=on-failure
+RestartSec=2s
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+ReadWritePaths=/run/ares/sockets /var/lib/ares/broker
+IPAddressDeny=any

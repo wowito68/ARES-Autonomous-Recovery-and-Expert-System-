@@ -1,0 +1,9 @@
+[Unit]
+Description=ARES OS platform
+Documentation=file:/usr/share/doc/ares-os/live-system.md
+Requires=ares-preflight.target
+Wants=ares-hardware.service ares-authority.target ares-ui.target
+After=ares-preflight.target ares-hardware.service ares-authority.target ares-ui.target
+
+[Install]
+WantedBy=multi-user.target

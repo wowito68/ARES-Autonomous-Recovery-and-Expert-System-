@@ -1,0 +1,6 @@
+[Unit]
+Description=ARES boot preflight
+Documentation=file:/usr/share/doc/ares-os/live-system.md
+Requires=ares-mode.service ares-state-setup.service ares-boot-integrity.service ares-host-protect.service ares-network-policy.service
+After=ares-mode.service ares-state-setup.service ares-boot-integrity.service ares-host-protect.service ares-network-policy.service
+Before=ares.target

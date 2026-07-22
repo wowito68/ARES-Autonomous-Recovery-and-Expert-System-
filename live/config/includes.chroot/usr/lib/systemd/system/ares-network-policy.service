@@ -1,0 +1,18 @@
+[Unit]
+Description=Record and enforce the ARES network policy
+Documentation=file:/usr/share/doc/ares-os/live-system.md
+Requires=ares-mode.service nftables.service
+After=ares-mode.service nftables.service
+Before=network-pre.target ares-preflight.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/ares/ares-network-policy
+RemainAfterExit=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/run/ares
+CapabilityBoundingSet=CAP_NET_ADMIN

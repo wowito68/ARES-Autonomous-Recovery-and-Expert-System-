@@ -1,0 +1,20 @@
+[Unit]
+Description=Apply a verified offline ARES update pack
+Documentation=file:/usr/share/doc/ares-os/live-system.md
+ConditionFileIsExecutable=/opt/ares/update/bin/ares-update
+ConditionPathExists=/run/ares/update-request
+After=ares-state-setup.service
+
+[Service]
+Type=oneshot
+User=ares-update
+Group=ares-update
+ExecStart=/opt/ares/update/bin/ares-update
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/ares/update /run/ares/update
+IPAddressDeny=any

@@ -1,0 +1,20 @@
+[Unit]
+Description=Publish the ARES platform boot-ready marker
+Documentation=file:/usr/share/doc/ares-os/live-system.md
+Requires=ares.target lightdm.service
+After=ares.target lightdm.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/ares/ares-boot-ready
+RemainAfterExit=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/run/ares
+DeviceAllow=/dev/ttyS0 w
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=graphical.target

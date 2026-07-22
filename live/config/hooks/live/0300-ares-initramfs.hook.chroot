@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+plymouth-set-default-theme ares
+update-initramfs -u -k all

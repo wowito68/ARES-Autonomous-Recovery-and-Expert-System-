@@ -1,0 +1,37 @@
+#!/bin/sh
+set -eu
+umask 022
+
+mode=live
+retention=ephemeral
+network=off
+
+for argument in $(cat /proc/cmdline); do
+    case "${argument}" in
+        ares.mode=*) mode=${argument#ares.mode=} ;;
+        ares.retention=*) retention=${argument#ares.retention=} ;;
+        ares.network=*) network=${argument#ares.network=} ;;
+    esac
+done
+
+case "${mode}" in
+    live|forensic|recovery) ;;
+    *) mode=live ;;
+esac
+case "${retention}" in
+    ephemeral|persistent) ;;
+    *) retention=ephemeral ;;
+esac
+case "${network}" in
+    off|scoped) ;;
+    *) network=off ;;
+esac
+
+mkdir -p /run/ares
+printf '%s\n' "${mode}" > /run/ares/mode.tmp
+printf 'ARES_MODE=%s\nARES_RETENTION=%s\nARES_NETWORK=%s\n' "${mode}" "${retention}" "${network}" > /run/ares/mode.env.tmp
+printf '{"schema_version":1,"mode":"%s","retention_requested":"%s","network":"%s"}\n' "${mode}" "${retention}" "${network}" > /run/ares/mode.json.tmp
+mv -f /run/ares/mode.tmp /run/ares/mode
+mv -f /run/ares/mode.env.tmp /run/ares/mode.env
+mv -f /run/ares/mode.json.tmp /run/ares/mode.json
+chmod 0644 /run/ares/mode /run/ares/mode.env /run/ares/mode.json

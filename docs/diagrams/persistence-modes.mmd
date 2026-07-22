@@ -1,0 +1,14 @@
+flowchart TD
+    bootProfile[Perfil de arranque] --> operationAxis{Operacion}
+    bootProfile --> retentionAxis{Retencion}
+    bootProfile --> networkAxis{Red}
+    operationAxis --> liveMode[Live]
+    operationAxis --> forensicMode[Forensic write-minimized]
+    operationAxis --> recoveryMode[Recovery]
+    retentionAxis --> ephemeralState[RAM efimera]
+    retentionAxis --> persistentRequest[Solicitud persistente]
+    persistentRequest --> identityCheck{LUKS2 del mismo USB y marcador valido}
+    identityCheck -->|No| ephemeralFallback[Fallback efimero]
+    identityCheck -->|Si| selectedState[Estado ARES seleccionado]
+    networkAxis --> networkOff[Sin red]
+    networkAxis --> scopedNetwork[Diagnostico acotado futuro]

@@ -1,0 +1,50 @@
+#!/bin/sh
+set -eu
+
+early_dir=${2:-$1}
+mode=live
+network=off
+for argument in $(cat /proc/cmdline); do
+    case "${argument}" in
+        ares.mode=*) mode=${argument#ares.mode=} ;;
+        ares.network=*) network=${argument#ares.network=} ;;
+    esac
+done
+
+mask_unit() {
+    ln -sf /dev/null "${early_dir}/$1"
+}
+
+if [ "${network}" = "off" ] || [ "${mode}" = "forensic" ]; then
+    for unit in \
+        NetworkManager.service \
+        NetworkManager-dispatcher.service \
+        NetworkManager-wait-online.service \
+        dbus-org.freedesktop.nm-dispatcher.service \
+        networking.service \
+        bluetooth.service \
+        bluetooth.target \
+        dbus-org.bluez.service \
+        ModemManager.service \
+        systemd-networkd.service \
+        systemd-networkd.socket \
+        systemd-resolved.service \
+        systemd-timesyncd.service \
+        wpa_supplicant.service; do
+        mask_unit "${unit}"
+    done
+fi
+
+if [ "${mode}" = "forensic" ]; then
+    for unit in \
+        udisks2.service \
+        lvm2-monitor.service \
+        mdmonitor.service \
+        nvmefc-boot-connections.service \
+        nvmf-autoconnect.service \
+        nvmf-connect-nbft.service \
+        nvmf-connect.target \
+        nvmf-connect@.service; do
+        mask_unit "${unit}"
+    done
+fi
