@@ -7,6 +7,7 @@ from ares.api.routes.assistant import router as assistant_router
 from ares.api.routes.capabilities import router as capabilities_router
 from ares.api.routes.health import router as health_router
 from ares.api.routes.knowledge import router as knowledge_router
+from ares.api.routes.planner import router as planner_router
 from ares.api.routes.reasoning import router as reasoning_router
 from ares.api.routes.system import router as system_router
 
@@ -18,3 +19,4 @@ api_router.include_router(system_router, prefix="/system", tags=["system"])
 api_router.include_router(capabilities_router, prefix="/capabilities", tags=["capabilities"])
 api_router.include_router(knowledge_router, prefix="/knowledge", tags=["knowledge"])
 api_router.include_router(reasoning_router, prefix="/reasoning", tags=["reasoning"])
+api_router.include_router(planner_router, prefix="/planner", tags=["planner"])
