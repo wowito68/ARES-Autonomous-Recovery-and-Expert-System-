@@ -47,7 +47,14 @@ def discover_plugins(
 def _load_plugin(entry_point: EntryPoint) -> CapabilityPlugin:
     try:
         provider: Any = entry_point.load()
-        plugin = provider if hasattr(provider, "manifest") else provider()
+        if isinstance(provider, type):
+            plugin = provider()
+        elif hasattr(provider, "manifest"):
+            plugin = provider
+        elif callable(provider):
+            plugin = provider()
+        else:
+            raise TypeError("entry point is not a plugin instance, class, or factory")
     except Exception as exc:
         raise PluginDiscoveryError(
             f"capability entry point {entry_point.name!r} could not be loaded"
