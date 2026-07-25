@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+# The systemd unit confines this process to loopback and denies non-local IPs.
+exec /opt/ares/llm/runtime/bin/ollama serve

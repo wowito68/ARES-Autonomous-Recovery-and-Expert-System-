@@ -3,21 +3,205 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
     <title>ARES OS</title>
     <link rel="stylesheet" href="style.css">
+    <script src="app.js" defer></script>
   </head>
   <body>
-    <main>
-      <img src="../branding/ares-mark.svg" alt="Marca ARES">
-      <p class="eyebrow">AUTONOMOUS RECOVERY AND EXPERT SYSTEM</p>
-      <h1>ARES OS</h1>
-      <p class="lead">La plataforma Live está activa.</p>
-      <section>
-        <h2>Fase 2 · Infraestructura del sistema operativo</h2>
-        <p>Debian 13 Trixie, inventario automático de hardware, sesión efímera y servicios preparados para integración.</p>
-        <p class="notice">Esta pantalla es provisional. El agente, el frontend de producto y las herramientas de reparación aún no están habilitados.</p>
-      </section>
-      <footer>Procesamiento local · Sin dependencia de Internet</footer>
-    </main>
+    <a class="skip-link" href="#contenido">Saltar al contenido</a>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Navegación principal">
+        <div class="brand">
+          <img src="../branding/ares-mark.svg" alt="" width="52" height="52">
+          <div>
+            <span class="brand-name">ARES</span>
+            <span class="brand-edition">OS LIVE</span>
+          </div>
+        </div>
+        <nav>
+          <a class="nav-link active" href="#resumen">Resumen</a>
+          <a class="nav-link" href="#asistente">Asistente local</a>
+          <a class="nav-link" href="#capabilities">Capabilities</a>
+          <a class="nav-link" href="#hardware">Hardware</a>
+        </nav>
+        <div class="privacy-note">
+          <span class="privacy-dot" aria-hidden="true"></span>
+          <div>
+            <strong>Procesamiento local</strong>
+            <span>Sin dependencia de Internet</span>
+          </div>
+        </div>
+      </aside>
+
+      <main id="contenido">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">AUTONOMOUS RECOVERY AND EXPERT SYSTEM</p>
+            <h1>Centro de control</h1>
+          </div>
+          <div class="topbar-actions">
+            <button id="refresh-button" class="secondary-button" type="button">Actualizar</button>
+            <span id="api-badge" class="status-badge pending">Comprobando sistema</span>
+          </div>
+        </header>
+
+        <noscript>
+          <div class="banner warning">ARES necesita JavaScript local para mostrar el estado del sistema.</div>
+        </noscript>
+        <div id="global-banner" class="banner hidden" role="status"></div>
+
+        <section id="resumen" class="section-block" aria-labelledby="resumen-title">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">ESTADO ACTUAL</p>
+              <h2 id="resumen-title">Sesión ARES</h2>
+            </div>
+            <p id="last-update" class="muted">Esperando datos locales…</p>
+          </div>
+
+          <div class="metric-grid">
+            <article class="metric-card">
+              <span class="metric-label">Modo</span>
+              <strong id="mode-value">—</strong>
+              <span id="mode-detail" class="metric-detail">Detectando</span>
+            </article>
+            <article class="metric-card">
+              <span class="metric-label">Persistencia</span>
+              <strong id="retention-value">—</strong>
+              <span id="retention-detail" class="metric-detail">Detectando</span>
+            </article>
+            <article class="metric-card">
+              <span class="metric-label">Red</span>
+              <strong id="network-value">—</strong>
+              <span id="network-detail" class="metric-detail">Política offline</span>
+            </article>
+            <article class="metric-card">
+              <span class="metric-label">Integridad</span>
+              <strong id="integrity-value">—</strong>
+              <span id="integrity-detail" class="metric-detail">Verificando</span>
+            </article>
+          </div>
+        </section>
+
+        <section id="asistente" class="section-block" aria-labelledby="assistant-title">
+          <div class="section-heading assistant-heading">
+            <div>
+              <p class="section-kicker">PRIMERA INTEGRACIÓN DE IA</p>
+              <h2 id="assistant-title">Asistente local</h2>
+            </div>
+            <span id="ai-badge" class="status-badge pending">Comprobando modelo</span>
+          </div>
+
+          <div class="assistant-layout">
+            <div class="assistant-intro">
+              <p>
+                Esta versión conversa con un modelo alojado en el propio equipo. No ejecuta
+                comandos, no repara discos y no tiene herramientas privilegiadas.
+              </p>
+              <dl class="runtime-details">
+                <div>
+                  <dt>Motor</dt>
+                  <dd>Ollama local</dd>
+                </div>
+                <div>
+                  <dt>Modelo</dt>
+                  <dd id="model-name">Pendiente</dd>
+                </div>
+                <div>
+                  <dt>Herramientas</dt>
+                  <dd>Deshabilitadas</dd>
+                </div>
+              </dl>
+            </div>
+
+            <div class="chat-panel">
+              <div id="chat-messages" class="chat-messages" aria-live="polite">
+                <div class="message assistant-message">
+                  <span class="message-author">ARES</span>
+                  <p>
+                    Estoy comprobando si el motor y el modelo local están disponibles.
+                  </p>
+                </div>
+              </div>
+              <form id="chat-form" class="chat-form">
+                <label for="chat-input">Describe el síntoma o formula una pregunta</label>
+                <div class="composer">
+                  <textarea
+                    id="chat-input"
+                    name="message"
+                    rows="2"
+                    maxlength="4000"
+                    placeholder="Ejemplo: el equipo se apaga al aumentar la carga…"
+                    disabled
+                    required
+                  ></textarea>
+                  <button id="send-button" type="submit" disabled>Enviar</button>
+                </div>
+                <p id="chat-hint" class="form-hint">
+                  Esperando al runtime de IA local.
+                </p>
+              </form>
+            </div>
+          </div>
+        </section>
+
+        <section
+          id="capabilities"
+          class="section-block"
+          aria-labelledby="capabilities-title"
+        >
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">ARES V2 · OPERACIONES DE ALTO NIVEL</p>
+              <h2 id="capabilities-title">Capabilities</h2>
+            </div>
+            <span id="capability-badge" class="status-badge pending">
+              Consultando catálogo
+            </span>
+          </div>
+
+          <div class="capability-layout">
+            <article class="capability-card">
+              <div>
+                <span class="capability-risk">OBSERVE · RIESGO BAJO</span>
+                <h3>Disk Analysis</h3>
+                <p>
+                  Analiza el inventario público que ARES recolectó durante el arranque.
+                  No abre dispositivos, no ejecuta comandos aportados por el usuario y
+                  no modifica el almacenamiento.
+                </p>
+              </div>
+              <button id="disk-analysis-button" type="button" disabled>
+                Analizar discos
+              </button>
+            </article>
+
+            <div id="capability-results" class="capability-results" aria-live="polite">
+              <p class="empty-state">
+                Ejecuta la capability para generar un resumen auditable y actualizar el
+                Knowledge Graph local.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section id="hardware" class="section-block" aria-labelledby="hardware-title">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">INVENTARIO AUTOMÁTICO</p>
+              <h2 id="hardware-title">Hardware detectado</h2>
+            </div>
+          </div>
+          <div id="hardware-grid" class="hardware-grid">
+            <p class="empty-state">Esperando el inventario del arranque…</p>
+          </div>
+        </section>
+
+        <footer>
+          ARES OS · Sesión Live · Los cambios sobre el equipo requieren autorización explícita
+        </footer>
+      </main>
+    </div>
   </body>
 </html>

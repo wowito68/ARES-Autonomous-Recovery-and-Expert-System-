@@ -1,0 +1,19 @@
+sequenceDiagram
+    actor U as Usuario/Planner
+    participant C as Capability Manager
+    participant W as Workflow Engine
+    participant I as Inventory Action
+    participant A as Analysis Action
+    participant K as Knowledge Graph
+    participant E as Event Bus
+    U->>C: storage.disk-analysis
+    C->>W: workflow validado 1.0.0
+    W->>E: workflow.started
+    W->>I: leer inventario público
+    I-->>W: discos sanitizados
+    W->>A: analizar evidencia
+    A-->>W: resumen y hallazgos
+    W->>K: upsert discos/particiones
+    K->>E: knowledge.graph.updated
+    W->>E: capability.completed
+    W-->>U: resultado sin Actions ni Tools

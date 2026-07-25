@@ -1,0 +1,179 @@
+#!/bin/sh
+set -eu
+
+# This boot-critical collector deliberately uses shell builtins and sysfs/procfs
+# only.  The complete Python inventory runs later, outside the readiness path.
+output_root=${ARES_HARDWARE_OUTPUT_ROOT:-/run/ares/hardware}
+runtime_root=${ARES_RUNTIME_ROOT:-/run/ares}
+private_output=${output_root}/private/inventory-v1.json
+public_output=${output_root}/public/inventory-v1.json
+private_temporary=${private_output}.tmp.$$
+public_temporary=${public_output}.tmp.$$
+trap 'rm -f -- "${private_temporary}" "${public_temporary}"' EXIT HUP INT TERM
+umask 027
+
+mkdir -p -- "${output_root}/private" "${output_root}/public"
+
+mode=unknown
+if [ -r "${runtime_root}/mode" ]; then
+    IFS= read -r mode < "${runtime_root}/mode" || true
+fi
+case "${mode}" in
+    live|persistent|forensic|recovery) ;;
+    *) mode=unknown ;;
+esac
+
+firmware=bios
+if [ -d /sys/firmware/efi ]; then
+    firmware=uefi
+fi
+
+architecture=$(/bin/uname -m)
+case "${architecture}" in
+    ''|*[!A-Za-z0-9_.-]*) architecture=unknown ;;
+esac
+kernel_release=$(/bin/uname -r)
+case "${kernel_release}" in
+    ''|*[!A-Za-z0-9_.+-]*) kernel_release=unknown ;;
+esac
+
+cpu_count=0
+while IFS= read -r line; do
+    case "${line}" in
+        processor*:* ) cpu_count=$((cpu_count + 1)) ;;
+    esac
+done < /proc/cpuinfo
+if [ "${cpu_count}" -gt 0 ]; then
+    cpu_status=ok
+else
+    cpu_status=unavailable
+fi
+
+memory_bytes=0
+while IFS=' ' read -r key value unit remainder; do
+    if [ "${key}" = 'MemTotal:' ]; then
+        case "${value}" in
+            ''|*[!0-9]*) memory_bytes=0 ;;
+            *) memory_bytes=$((value * 1024)) ;;
+        esac
+        break
+    fi
+done < /proc/meminfo
+if [ "${memory_bytes}" -gt 0 ]; then
+    memory_status=ok
+else
+    memory_status=unavailable
+fi
+
+storage_items=
+storage_count=0
+for device in /sys/block/*; do
+    [ -e "${device}" ] || continue
+    name=${device##*/}
+    case "${name}" in
+        ''|*[!A-Za-z0-9_.:-]*) continue ;;
+    esac
+    sectors=0
+    readonly=0
+    removable=0
+    IFS= read -r sectors < "${device}/size" || sectors=0
+    IFS= read -r readonly < "${device}/ro" || readonly=0
+    IFS= read -r removable < "${device}/removable" || removable=0
+    case "${sectors}" in ''|*[!0-9]*) sectors=0 ;; esac
+    case "${readonly}" in 0|1) ;; *) readonly=0 ;; esac
+    case "${removable}" in 0|1) ;; *) removable=0 ;; esac
+    size_bytes=$((sectors * 512))
+    item="{\"name\":\"${name}\",\"kname\":\"${name}\",\"path\":\"/dev/${name}\",\"type\":\"disk\",\"size\":${size_bytes},\"ro\":${readonly},\"rm\":${removable}}"
+    if [ -n "${storage_items}" ]; then
+        storage_items=${storage_items},${item}
+    else
+        storage_items=${item}
+    fi
+    storage_count=$((storage_count + 1))
+done
+if [ "${storage_count}" -gt 0 ]; then
+    storage_status=ok
+else
+    storage_status=unavailable
+fi
+
+network_items=
+network_count=0
+for interface in /sys/class/net/*; do
+    [ -e "${interface}" ] || continue
+    name=${interface##*/}
+    case "${name}" in
+        ''|*[!A-Za-z0-9_.:@-]*) continue ;;
+    esac
+    ifindex=0
+    mtu=0
+    IFS= read -r ifindex < "${interface}/ifindex" || ifindex=0
+    IFS= read -r mtu < "${interface}/mtu" || mtu=0
+    case "${ifindex}" in ''|*[!0-9]*) ifindex=0 ;; esac
+    case "${mtu}" in ''|*[!0-9]*) mtu=0 ;; esac
+    item="{\"ifname\":\"${name}\",\"ifindex\":${ifindex},\"mtu\":${mtu}}"
+    if [ -n "${network_items}" ]; then
+        network_items=${network_items},${item}
+    else
+        network_items=${item}
+    fi
+    network_count=$((network_count + 1))
+done
+if [ "${network_count}" -gt 0 ]; then
+    network_status=ok
+else
+    network_status=unavailable
+fi
+
+pci_items=
+for device in /sys/bus/pci/devices/*; do
+    [ -e "${device}" ] || continue
+    name=${device##*/}
+    class_code=
+    IFS= read -r class_code < "${device}/class" || class_code=
+    case "${name}:${class_code}" in
+        *[!A-Za-z0-9_.:x-]*) continue ;;
+    esac
+    case "${class_code}" in
+        0x03*) item="\"${name} Display controller [class=${class_code}]\"" ;;
+        *) continue ;;
+    esac
+    if [ -n "${pci_items}" ]; then
+        pci_items=${pci_items},${item}
+    else
+        pci_items=${item}
+    fi
+done
+
+status=ok
+errors=
+for result in \
+    "cpu:${cpu_status}" \
+    "memory:${memory_status}" \
+    "storage:${storage_status}" \
+    "network_links:${network_status}"; do
+    probe=${result%%:*}
+    probe_status=${result#*:}
+    if [ "${probe_status}" != ok ]; then
+        status=partial
+        item="{\"probe\":\"${probe}\",\"status\":\"${probe_status}\"}"
+        if [ -n "${errors}" ]; then
+            errors=${errors},${item}
+        else
+            errors=${item}
+        fi
+    fi
+done
+
+generated_at=$(/bin/date -u '+%Y-%m-%dT%H:%M:%SZ')
+prefix="{\"\$schema\":\"file:///usr/share/ares/schemas/hardware-v1.schema.json\",\"schema_version\":1,\"generation\":1,\"generated_at\":\"${generated_at}\",\"status\":\"${status}\",\"collection\":\"boot\",\"boot\":{\"mode\":\"${mode}\",\"firmware\":\"${firmware}\",\"secure_boot\":\"unknown\",\"integrity_trust\":\"unknown\"},\"probes\":{\"platform\":{\"status\":\"ok\",\"data\":{\"sysname\":\"Linux\",\"release\":\"${kernel_release}\",\"machine\":\"${architecture}\"},\"source\":\"procfs\"},\"cpu\":{\"status\":\"${cpu_status}\",\"data\":{\"lscpu\":[{\"field\":\"Architecture:\",\"data\":\"${architecture}\"},{\"field\":\"CPU(s):\",\"data\":\"${cpu_count}\"}]},\"source\":\"procfs\"},\"memory\":{\"status\":\"${memory_status}\",\"data\":{\"unit\":\"bytes\",\"meminfo\":{\"MemTotal\":${memory_bytes}}},\"source\":\"procfs\"},\"dmi\":{\"status\":\"unavailable\",\"data\":{}},\"storage\":{\"status\":\"${storage_status}\",\"data\":{\"blockdevices\":[${storage_items}]},\"source\":\"sysfs\"},\"pci\":{\"status\":\"ok\",\"data\":[${pci_items}],\"source\":\"sysfs\"},\"network_links\":{\"status\":\"${network_status}\",\"data\":[${network_items}],\"source\":\"sysfs\"},\"power\":{\"status\":\"unavailable\",\"data\":[]},\"thermal\":{\"status\":\"unavailable\",\"data\":[]},\"efi\":{\"status\":\"ok\",\"data\":{\"firmware\":\"${firmware}\"},\"source\":\"sysfs\"}},\"smart_health\":{\"status\":\"skipped_policy\",\"reason\":\"deep SMART reads are deferred\"},\"errors\":[${errors}],"
+
+printf '%s\n' "${prefix}\"view\":\"private\"}" > "${private_temporary}"
+printf '%s\n' "${prefix}\"view\":\"redacted\"}" > "${public_temporary}"
+chmod 0640 "${private_temporary}" "${public_temporary}"
+# IDs are fixed by /usr/lib/sysusers.d/ares.conf.
+chown 972:972 "${private_temporary}"
+chown 972:971 "${public_temporary}"
+mv -f -- "${private_temporary}" "${private_output}"
+mv -f -- "${public_temporary}" "${public_output}"
+trap - EXIT HUP INT TERM

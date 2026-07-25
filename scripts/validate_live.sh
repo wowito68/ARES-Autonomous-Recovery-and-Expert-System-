@@ -16,12 +16,36 @@ for required in \
     live/auto/config \
     live/config/bootloaders/grub-pc/grub.cfg \
     live/config/bootloaders/syslinux_common/live.cfg.in \
+    live/config/hooks/live/0400-ares-static-live-config.hook.chroot \
+    live/config/hooks/live/0800-ares-python-cache.hook.chroot \
+    live/config/hooks/live/0950-ares-update-markers.hook.chroot \
     live/config/hooks/live/0990-ares-final-policy-check.hook.chroot \
+    live/config/includes.chroot/etc/initramfs-tools/hooks/ares-verity \
+    live/config/includes.chroot/opt/ares/backend/bin/ares-api \
+    live/config/includes.chroot/opt/ares/llm/bin/ares-llm \
+    live/config/includes.chroot/usr/share/ares/platform/app.js \
+    live/config/includes.chroot/usr/share/ares/platform/unavailable.html \
     live/config/includes.chroot/usr/lib/systemd/system/ares.target \
     live/config/includes.chroot/usr/lib/systemd/system/ares-boot-ready.service \
+    live/config/includes.chroot/usr/lib/systemd/system/ares-hardware-enrichment.service \
+    live/config/includes.chroot/usr/lib/systemd/system/ares-hardware-enrichment.timer \
     live/config/includes.chroot/etc/nftables.conf \
+    live/config/includes.chroot/usr/lib/ares/ares-hardware-boot \
     live/config/includes.chroot/usr/lib/ares/ares-hardware-inventory; do
     [ -f "${repo_root}/${required}" ] || fail "missing ${required}"
+done
+
+for required in \
+    backend/src/ares/capabilities/manager.py \
+    backend/src/ares/capabilities/plugins/disk_analysis.py \
+    backend/src/ares/events/bus.py \
+    backend/src/ares/knowledge/graph.py \
+    backend/src/ares/reasoning/engine.py \
+    backend/src/ares/workflows/engine.py \
+    docs/architecture-v2-capabilities.md \
+    docs/diagrams/ares-v2-capability-flow.mmd \
+    docs/diagrams/ares-v2-disk-analysis.mmd; do
+    [ -f "${repo_root}/${required}" ] || fail "missing ARES v2 input ${required}"
 done
 
 set -a
@@ -108,5 +132,94 @@ fi
 if rg -n '^(xfce4-panel|xfce4-terminal)$' "${repo_root}/live/config/package-lists"; then
     fail 'the kiosk image must not install an interactive panel or terminal by default'
 fi
+
+grep -q '^Exec=/usr/lib/ares/ares-kiosk-launch$' \
+    "${repo_root}/live/config/includes.chroot/etc/xdg/autostart/ares-kiosk.desktop" \
+    || fail 'the kiosk must inherit the active graphical session environment'
+grep -q '^fallback_url=file:///usr/share/ares/platform/unavailable.html$' \
+    "${repo_root}/live/config/includes.chroot/usr/lib/ares/ares-kiosk-launch" \
+    || fail 'the kiosk fallback must be diagnostic rather than a broken API dashboard'
+grep -q '^Type=simple$' \
+    "${repo_root}/live/config/includes.chroot/usr/lib/systemd/system/ares-backend.service" \
+    || fail 'the Uvicorn backend does not implement sd_notify'
+grep -q '^PrivateDevices=yes$' \
+    "${repo_root}/live/config/includes.chroot/usr/lib/systemd/system/ares-backend.service" \
+    || fail 'the API backend must not receive direct block-device access'
+grep -Fq 'd /var/lib/ares/capabilities 0700 ares-api ares-api -' \
+    "${repo_root}/live/config/includes.chroot/usr/lib/tmpfiles.d/ares.conf" \
+    || fail 'the private Capability journal directory must be created reproducibly'
+grep -Fq '/capabilities/storage.disk-analysis/executions' \
+    "${repo_root}/live/config/includes.chroot/usr/share/ares/platform/app.js" \
+    || fail 'the local interface must expose the Disk Analysis capability'
+if grep -Fq '"command"' \
+    "${repo_root}/live/config/includes.chroot/usr/share/ares/platform/app.js"; then
+    fail 'the local interface must not send command fields to a capability'
+fi
+grep -q 'copy_exec.*libcryptsetup' \
+    "${repo_root}/live/config/includes.chroot/etc/initramfs-tools/hooks/ares-verity" \
+    || fail 'the initramfs must include libmount dm-verity dlopen dependencies'
+grep -Fq 'api=%s ui=%s hardware=%s' \
+    "${repo_root}/live/config/includes.chroot/usr/lib/ares/ares-boot-ready" \
+    || fail 'the boot marker must prove backend, interface, and hardware readiness'
+grep -q -- '--invalidation-mode checked-hash' \
+    "${repo_root}/live/config/hooks/live/0800-ares-python-cache.hook.chroot" \
+    || fail 'the backend must have reproducible precompiled bytecode'
+grep -Fq 'sysconfig.get_path("stdlib")' \
+    "${repo_root}/live/config/hooks/live/0800-ares-python-cache.hook.chroot" \
+    || fail 'the hardware inventory must not compile the Python standard library at boot'
+grep -q '^TimeoutStartSec=30s$' \
+    "${repo_root}/live/config/includes.chroot/usr/lib/systemd/system/ares-hardware.service" \
+    || fail 'the hardware inventory must retain a bounded slow-hardware margin'
+grep -q '^TimeoutStartSec=15s$' \
+    "${repo_root}/live/config/includes.chroot/usr/lib/systemd/system/ares-boot-integrity.service" \
+    || fail 'boot integrity must have a bounded critical-path timeout'
+grep -q '^#!/bin/sh$' \
+    "${repo_root}/live/config/includes.chroot/usr/lib/ares/ares-boot-integrity" \
+    || fail 'boot integrity must not wait for a Python interpreter on the critical path'
+grep -Fq 'timeout 3 "${dmsetup_binary}" ls --target verity' \
+    "${repo_root}/live/config/includes.chroot/usr/lib/ares/ares-boot-integrity" \
+    || fail 'the dm-verity observation must have a bounded command timeout'
+grep -Fq 'Another ARES ISO build is already running' \
+    "${repo_root}/scripts/build_iso.sh" \
+    || fail 'ISO builds must be serialized to prevent concurrent resource exhaustion'
+grep -Fq 'MKSQUASHFS_OPTIONS=-processors ${squashfs_processors} -mem ${squashfs_memory}' \
+    "${repo_root}/scripts/build_iso.sh" \
+    || fail 'SquashFS compression must have explicit CPU and memory limits'
+grep -q '^ExecStart=/usr/lib/ares/ares-hardware-boot$' \
+    "${repo_root}/live/config/includes.chroot/usr/lib/systemd/system/ares-hardware.service" \
+    || fail 'platform readiness must wait only for the boot-critical inventory'
+grep -q '^ExecStart=/usr/lib/ares/ares-hardware-inventory enrich$' \
+    "${repo_root}/live/config/includes.chroot/usr/lib/systemd/system/ares-hardware-enrichment.service" \
+    || fail 'the complete hardware inventory must be enriched automatically'
+for unit in ares-hardware.service ares-hardware-enrichment.service; do
+    grep -q '^CapabilityBoundingSet=.*CAP_DAC_OVERRIDE' \
+        "${repo_root}/live/config/includes.chroot/usr/lib/systemd/system/${unit}" \
+        || fail "${unit} cannot publish into the UID 972-owned runtime directory"
+    grep -q '^ReadWritePaths=/run/ares/hardware$' \
+        "${repo_root}/live/config/includes.chroot/usr/lib/systemd/system/${unit}" \
+        || fail "${unit} must confine its write capability to the hardware runtime"
+done
+grep -Fq 'for device in /sys/block/*' \
+    "${repo_root}/live/config/includes.chroot/usr/lib/ares/ares-hardware-boot" \
+    || fail 'the boot-critical storage inventory must use sysfs'
+grep -Fq 'for interface in /sys/class/net/*' \
+    "${repo_root}/live/config/includes.chroot/usr/lib/ares/ares-hardware-boot" \
+    || fail 'the boot-critical network inventory must use sysfs'
+if grep -Eq '(^|[ /])(python3|lscpu|lsblk|lspci|findmnt|ip|iw|smartctl)([[:space:]]|$)' \
+    "${repo_root}/live/config/includes.chroot/usr/lib/ares/ares-hardware-boot"; then
+    fail 'the readiness path must not launch Python or heavyweight hardware probes'
+fi
+grep -Fq '/var/lib/live/config/locales' \
+    "${repo_root}/live/config/hooks/live/0400-ares-static-live-config.hook.chroot" \
+    || fail 'immutable locale configuration must be completed at build time'
+grep -Fq 'live-config.nocomponents username=ares' \
+    "${repo_root}/live/auto/config" \
+    || fail 'the immutable Live account must not be rebuilt during boot'
+grep -Fq 'u ares 1000:1000' \
+    "${repo_root}/live/config/includes.chroot/usr/lib/sysusers.d/ares.conf" \
+    || fail 'the Live operator must be created reproducibly at build time'
+grep -q '^ConditionKernelCommandLine=ares.mode=forensic$' \
+    "${repo_root}/live/config/includes.chroot/usr/lib/systemd/system/ares-block-readonly@.service" \
+    || fail 'forensic block units must be skipped outside forensic mode'
 
 printf '%s\n' 'ARES OS source validation passed.'

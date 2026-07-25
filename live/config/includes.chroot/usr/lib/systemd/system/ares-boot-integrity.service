@@ -8,6 +8,7 @@ Before=ares-preflight.target
 Type=oneshot
 ExecStart=/usr/lib/ares/ares-boot-integrity
 RemainAfterExit=yes
+TimeoutStartSec=15s
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
@@ -17,4 +18,3 @@ ProtectControlGroups=yes
 PrivateTmp=yes
 ReadWritePaths=/run/ares
 RestrictAddressFamilies=AF_UNIX
-

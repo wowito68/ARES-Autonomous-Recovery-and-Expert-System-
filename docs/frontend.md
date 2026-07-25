@@ -1,12 +1,24 @@
 # Diseño del frontend
 
-> Estado: diseño objetivo; la aplicación React aún no está implementada.
+> Estado: existe una primera interfaz estática sin dependencias externas,
+> servida por FastAPI y con resumen, estado de IA/chat local y ejecución
+> explícita de la capability pasiva Disk Analysis. La SPA
+> React/TypeScript descrita abajo sigue siendo el diseño objetivo.
 
 ## Enfoque
 
 La interfaz será una consola de recuperación guiada, no un chat genérico. El chat explica y coordina; la evidencia, el plan, los riesgos y el estado de cada acción son elementos de primer nivel.
 
 La SPA React/TypeScript/Tailwind se compila a assets estáticos que FastAPI sirve bajo el mismo origen en producción. No usa CDN, fuentes remotas, telemetría ni service worker. Esto simplifica CORS, sesión y funcionamiento offline.
+
+La interfaz incorporada en la ISO actual usa HTML/CSS/JavaScript nativo para
+evitar Node y dependencias de red en esta etapa. Arranca directamente desde el
+autostart XDG de Xfce, espera readiness del backend y abre Firefox en kiosco. Si
+el API no arranca, muestra una página local degradada en vez de dejar una
+pantalla vacía. El texto del modelo se inserta únicamente con `textContent`.
+La vista ARES v2 consulta el catálogo, inicia únicamente
+`storage.disk-analysis` con un input cerrado y presenta resumen, hallazgos y
+revisión del Knowledge Graph. No acepta rutas o comandos.
 
 ## Layout
 

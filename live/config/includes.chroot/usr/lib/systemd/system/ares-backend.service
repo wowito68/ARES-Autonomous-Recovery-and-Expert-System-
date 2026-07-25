@@ -6,9 +6,17 @@ Wants=ares-hardware.service ares-audit.service
 After=ares-hardware.service ares-audit.service
 
 [Service]
-Type=notify
+Type=simple
 User=ares-api
 Group=ares-api
+Environment=ARES_ENVIRONMENT=production
+Environment=ARES_DATABASE_URL=sqlite+aiosqlite:////var/lib/ares/ares.db
+Environment=ARES_RUNTIME_STATE_DIR=/run/ares
+Environment=ARES_CAPABILITY_STATE_DIR=/var/lib/ares/capabilities
+Environment=ARES_STATIC_DIR=/usr/share/ares/platform
+Environment=ARES_AI_BASE_URL=http://127.0.0.1:11434
+Environment=ARES_AI_MODEL=qwen2.5:1.5b-instruct-q4_K_M
+WorkingDirectory=/var/lib/ares
 ExecStart=/opt/ares/backend/bin/ares-api
 Restart=on-failure
 RestartSec=2s

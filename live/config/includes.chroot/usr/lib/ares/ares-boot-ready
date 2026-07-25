@@ -4,7 +4,43 @@ set -eu
 mkdir -p /run/ares
 trust=$(jq -r '.trust // "UNKNOWN"' /run/ares/integrity.json)
 mode=$(cat /run/ares/mode)
-printf 'ARES_BOOT_READY mode=%s trust=%s\n' "${mode}" "${trust}" > /run/ares/boot-ready
+
+api=UNAVAILABLE
+ui=UNAVAILABLE
+hardware=UNAVAILABLE
+attempt=0
+while [ "${attempt}" -lt 120 ]; do
+    if [ -s /run/ares/hardware/public/inventory-v1.json ]; then
+        hardware=READY
+    fi
+    if curl --fail --silent --show-error --max-time 1 \
+        http://127.0.0.1:8000/api/v1/health/ready >/dev/null 2>&1; then
+        api=READY
+    fi
+    if curl --fail --silent --show-error --max-time 1 \
+        http://127.0.0.1:8000/ \
+        | grep -Fq '<title>ARES'; then
+        ui=READY
+    fi
+    if [ "${api}" = READY ] && [ "${ui}" = READY ] && [ "${hardware}" = READY ]; then
+        break
+    fi
+    attempt=$((attempt + 1))
+    sleep 1
+done
+
+if [ "${api}" != READY ] || [ "${ui}" != READY ] || [ "${hardware}" != READY ]; then
+    printf 'ARES_BOOT_FAILED mode=%s trust=%s api=%s ui=%s hardware=%s\n' \
+        "${mode}" "${trust}" "${api}" "${ui}" "${hardware}" > /run/ares/boot-ready
+    chmod 0644 /run/ares/boot-ready
+    if [ -c /dev/ttyS0 ]; then
+        timeout 2 sh -c 'cat /run/ares/boot-ready > /dev/ttyS0' || true
+    fi
+    exit 1
+fi
+
+printf 'ARES_BOOT_READY mode=%s trust=%s api=%s ui=%s hardware=%s\n' \
+    "${mode}" "${trust}" "${api}" "${ui}" "${hardware}" > /run/ares/boot-ready
 chmod 0644 /run/ares/boot-ready
 
 if [ -c /dev/ttyS0 ]; then

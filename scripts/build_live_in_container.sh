@@ -50,6 +50,10 @@ fi
 cp -a /workspace/live/auto /build/
 cp -a /workspace/live/config /build/
 mkdir -p /build/config/packages.chroot /build/config/includes.chroot/usr/share/doc/ares-os
+mkdir -p /build/config/includes.chroot/opt/ares/backend/src
+cp -a /workspace/backend/src/ares /build/config/includes.chroot/opt/ares/backend/src/
+find /build/config/includes.chroot/opt/ares/backend/src \
+    -type d -name __pycache__ -prune -exec rm -rf -- {} +
 
 if find /workspace/live/packages/debs -maxdepth 1 -type f -name '*.deb' -print -quit 2>/dev/null | grep -q .; then
     if [ "${ARES_CHANNEL}" != "development" ]; then
@@ -57,6 +61,90 @@ if find /workspace/live/packages/debs -maxdepth 1 -type f -name '*.deb' -print -
         exit 1
     fi
     cp /workspace/live/packages/debs/*.deb /build/config/packages.chroot/
+fi
+
+if [ -d /workspace/live/models/runtime ] || [ -d /workspace/live/models/store ]; then
+    if [ ! -s /workspace/live/models/BUNDLE.json ]; then
+        printf '%s\n' 'An offline AI bundle requires live/models/BUNDLE.json.' >&2
+        exit 1
+    fi
+    if [ ! -s /workspace/live/models/SHA256SUMS ]; then
+        printf '%s\n' 'An offline AI bundle requires live/models/SHA256SUMS.' >&2
+        exit 1
+    fi
+    if ! jq -e '
+        .schema_version == 1 and
+        .architecture == "amd64" and
+        .runtime.name == "ollama" and
+        (.runtime.version | type == "string" and length > 0) and
+        (.runtime.source | type == "string" and startswith("https://")) and
+        (.runtime.license | type == "string" and length > 0) and
+        .model.name == "qwen2.5:1.5b-instruct-q4_K_M" and
+        (.model.source | type == "string" and startswith("https://")) and
+        (.model.license | type == "string" and length > 0)
+    ' /workspace/live/models/BUNDLE.json >/dev/null; then
+        printf '%s\n' 'The offline AI BUNDLE.json metadata is incomplete or invalid.' >&2
+        exit 1
+    fi
+    if find /workspace/live/models/runtime /workspace/live/models/store \
+        -type l -print -quit 2>/dev/null | grep -q .; then
+        printf '%s\n' 'Symlinks are forbidden inside the offline AI bundle.' >&2
+        exit 1
+    fi
+    actual_ai_files=/tmp/ares-ai-actual-files
+    declared_ai_files=/tmp/ares-ai-declared-files
+    (
+        cd /workspace/live/models
+        printf '%s\n' BUNDLE.json
+        find runtime store -type f -print 2>/dev/null | LC_ALL=C sort
+    ) > "${actual_ai_files}"
+    awk 'NF == 2 {name=$2; sub(/^\*/, "", name); print name}' \
+        /workspace/live/models/SHA256SUMS | LC_ALL=C sort -u > "${declared_ai_files}"
+    if ! cmp -s "${actual_ai_files}" "${declared_ai_files}"; then
+        printf '%s\n' 'SHA256SUMS must declare every and only offline AI bundle file.' >&2
+        exit 1
+    fi
+    (
+        cd /workspace/live/models
+        sha256sum --check --strict SHA256SUMS
+    )
+    if [ ! -x /workspace/live/models/runtime/bin/ollama ]; then
+        printf '%s\n' 'The AI bundle lacks executable runtime/bin/ollama.' >&2
+        exit 1
+    fi
+    if ! file /workspace/live/models/runtime/bin/ollama \
+        | grep -Eq 'ELF 64-bit LSB.*x86-64'; then
+        printf '%s\n' 'The AI runtime must be an amd64 ELF executable.' >&2
+        exit 1
+    fi
+    if [ ! -s \
+        /workspace/live/models/store/manifests/registry.ollama.ai/library/qwen2.5/1.5b-instruct-q4_K_M
+    ]; then
+        printf '%s\n' 'The offline AI bundle lacks the configured model manifest.' >&2
+        exit 1
+    fi
+    mkdir -p \
+        /build/config/includes.chroot/opt/ares/llm/runtime \
+        /build/config/includes.chroot/usr/share/ares/ai \
+        /build/config/includes.chroot/var/lib/ares/models
+    cp -a /workspace/live/models/runtime/. \
+        /build/config/includes.chroot/opt/ares/llm/runtime/
+    cp /workspace/live/models/BUNDLE.json \
+        /build/config/includes.chroot/usr/share/ares/ai/BUNDLE.json
+    if [ -d /workspace/live/models/store ]; then
+        cp -a /workspace/live/models/store/. \
+            /build/config/includes.chroot/var/lib/ares/models/
+    fi
+    chown -R 0:0 /build/config/includes.chroot/opt/ares/llm/runtime
+    chown -R 977:977 /build/config/includes.chroot/var/lib/ares/models
+    find \
+        /build/config/includes.chroot/opt/ares/llm/runtime \
+        /build/config/includes.chroot/var/lib/ares/models \
+        -type d -exec chmod go-w -- {} +
+    find \
+        /build/config/includes.chroot/opt/ares/llm/runtime \
+        /build/config/includes.chroot/var/lib/ares/models \
+        -type f -exec chmod go-w -- {} +
 fi
 
 cp /workspace/docs/*.md /build/config/includes.chroot/usr/share/doc/ares-os/
@@ -97,12 +185,6 @@ if [ "${config_only}" = "1" ]; then
     fi
     exit 0
 fi
-
-rm -f \
-    /output/ARES.iso \
-    /output/ARES.iso.sha256 \
-    /output/ARES.packages.txt \
-    /output/ARES.build.json
 
 lb build
 

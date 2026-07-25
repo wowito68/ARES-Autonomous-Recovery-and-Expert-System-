@@ -1,0 +1,13 @@
+flowchart TB
+    U[Usuario] --> L[LLM local]
+    L --> R[Reasoning Engine]
+    R --> P[Planner]
+    P --> C[Capability Manager]
+    C --> W[Workflow Engine]
+    W --> A[Actions privadas]
+    A --> T[Tools privadas]
+    T --> O[Sistema operativo]
+    W --> E[Event Bus]
+    A --> K[System Knowledge Graph]
+    E --> J[(Journal durable)]
+    K --> G[(Snapshot atómico)]

@@ -1,20 +1,26 @@
 #!/bin/sh
 set -eu
 
-fallback_url=file:///usr/share/ares/platform/index.html
+fallback_url=file:///usr/share/ares/platform/unavailable.html
 frontend_url=http://127.0.0.1:8000/
 selected_url=${fallback_url}
+runtime_dir=${XDG_RUNTIME_DIR:-/tmp}
+log_file=${runtime_dir}/ares-kiosk.log
 
-if systemctl is-active --quiet ares-frontend.service 2>/dev/null; then
-    attempts=0
-    while [ "${attempts}" -lt 30 ]; do
-        if curl --fail --silent --show-error --max-time 1 "${frontend_url}api/v1/health/ready" >/dev/null 2>&1; then
-            selected_url=${frontend_url}
-            break
-        fi
-        attempts=$((attempts + 1))
-        sleep 1
-    done
-fi
+{
+    printf 'ARES kiosk startup: display=%s session=%s\n' \
+        "${DISPLAY:-missing}" "${XDG_CURRENT_DESKTOP:-unknown}"
+} > "${log_file}" 2>/dev/null || true
 
+attempts=0
+while [ "${attempts}" -lt 120 ]; do
+    if curl --fail --silent --show-error --max-time 1 "${frontend_url}api/v1/health/ready" >/dev/null 2>&1; then
+        selected_url=${frontend_url}
+        break
+    fi
+    attempts=$((attempts + 1))
+    sleep 1
+done
+
+printf 'ARES kiosk URL: %s\n' "${selected_url}" >> "${log_file}" 2>/dev/null || true
 exec firefox-esr --kiosk --private-window --no-remote "${selected_url}"

@@ -1,0 +1,13 @@
+[Unit]
+Description=Schedule non-blocking ARES hardware inventory enrichment
+Documentation=file:/usr/share/doc/ares-os/live-system.md
+Requires=ares-hardware.service
+After=ares-hardware.service
+
+[Timer]
+OnActiveSec=1s
+AccuracySec=1s
+Unit=ares-hardware-enrichment.service
+
+[Install]
+WantedBy=ares.target

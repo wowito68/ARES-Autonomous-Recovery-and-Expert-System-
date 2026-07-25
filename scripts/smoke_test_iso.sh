@@ -10,7 +10,15 @@ iso=$(CDPATH= cd -- "$(dirname -- "$1")" && pwd)/$(basename -- "$1")
 [ -s "${iso}" ] || { printf 'ISO not found or empty: %s\n' "${iso}" >&2; exit 1; }
 command -v qemu-system-x86_64 >/dev/null 2>&1 || { printf '%s\n' 'qemu-system-x86_64 is required.' >&2; exit 1; }
 
-timeout_seconds=${ARES_QEMU_TIMEOUT:-90}
+timeout_seconds=${ARES_QEMU_TIMEOUT:-300}
+profile=${ARES_QEMU_PROFILE:-all}
+case "${profile}" in
+    all|bios-cd|bios-hybrid|uefi-secure-cd|uefi-secure-hybrid) ;;
+    *)
+        printf 'Unknown ARES_QEMU_PROFILE: %s\n' "${profile}" >&2
+        exit 2
+        ;;
+esac
 temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/ares-qemu.XXXXXX")
 failed=0
 cleanup() {
@@ -36,6 +44,7 @@ run_boot() {
     expected_trust=$2
     shift 2
     log="${temp_dir}/${name}.log"
+    started_at=$(date +%s)
 
     qemu-system-x86_64 "$@" >"${log}" 2>&1 &
     qemu_pid=$!
@@ -48,9 +57,16 @@ run_boot() {
                 wait "${qemu_pid}" 2>/dev/null || true
                 fail_boot "${name}" "boot marker reported an unexpected integrity state"
             fi
+            if ! grep -Fq 'api=READY ui=READY hardware=READY' "${log}"; then
+                kill "${qemu_pid}" 2>/dev/null || true
+                wait "${qemu_pid}" 2>/dev/null || true
+                fail_boot "${name}" "backend, static interface, or hardware inventory did not become ready"
+            fi
             kill "${qemu_pid}" 2>/dev/null || true
             wait "${qemu_pid}" 2>/dev/null || true
-            printf '%s guest boot passed (%s).\n' "${name}" "${expected_trust}"
+            elapsed=$(( $(date +%s) - started_at ))
+            printf '%s guest boot passed (%s, %ss).\n' \
+                "${name}" "${expected_trust}" "${elapsed}"
             return 0
         fi
         if [ "$(date +%s)" -ge "${deadline}" ]; then
@@ -65,46 +81,66 @@ run_boot() {
     fail_boot "${name}" "QEMU exited before the guest boot-ready marker (status ${qemu_status:-0})"
 }
 
-common_args='-m 2048 -nic none -display none -serial stdio -no-reboot'
-# shellcheck disable=SC2086
-run_boot bios-cd UNAVAILABLE \
-    -machine accel=tcg ${common_args} \
-    -boot d \
-    -cdrom "${iso}"
+selected() {
+    [ "${profile}" = all ] || [ "${profile}" = "$1" ]
+}
 
-# Exercise the ISO-hybrid system area as a disk, matching a raw USB write.
-# shellcheck disable=SC2086
-run_boot bios-hybrid UNAVAILABLE \
-    -machine accel=tcg ${common_args} \
-    -boot c \
-    -drive "file=${iso},format=raw,if=ide,media=disk,readonly=on"
-
-ovmf_code=$(find /usr/share/OVMF /usr/share/ovmf -type f -name 'OVMF_CODE_4M.secboot.fd' -print 2>/dev/null | sort | head -n 1)
-ovmf_vars=$(find /usr/share/OVMF /usr/share/ovmf -type f -name 'OVMF_VARS_4M.ms.fd' -print 2>/dev/null | sort | head -n 1)
-if [ -z "${ovmf_code}" ] || [ -z "${ovmf_vars}" ]; then
-    failed=1
-    printf '%s\n' 'Secure Boot OVMF firmware with Microsoft-enrolled VARS is required.' >&2
-    exit 1
+common_args='-m 2048 -smp 4 -accel tcg,thread=multi -nic none -display none -serial stdio -no-reboot'
+if selected bios-cd; then
+    # shellcheck disable=SC2086
+    run_boot bios-cd UNAVAILABLE \
+        -machine pc ${common_args} \
+        -boot d \
+        -cdrom "${iso}"
 fi
 
-cp "${ovmf_vars}" "${temp_dir}/OVMF_VARS_CD.fd"
-# shellcheck disable=SC2086
-run_boot uefi-secure-cd ENFORCED_PARTIAL \
-    -machine q35,smm=on,accel=tcg ${common_args} \
-    -global driver=cfi.pflash01,property=secure,value=on \
-    -drive "if=pflash,format=raw,readonly=on,file=${ovmf_code}" \
-    -drive "if=pflash,format=raw,file=${temp_dir}/OVMF_VARS_CD.fd" \
-    -boot d \
-    -cdrom "${iso}"
+# Exercise the ISO-hybrid system area as a disk, matching a raw USB write.
+if selected bios-hybrid; then
+    # shellcheck disable=SC2086
+    run_boot bios-hybrid UNAVAILABLE \
+        -machine pc ${common_args} \
+        -boot c \
+        -drive "file=${iso},format=raw,if=ide,media=disk,readonly=on"
+fi
 
-cp "${ovmf_vars}" "${temp_dir}/OVMF_VARS_HYBRID.fd"
-# shellcheck disable=SC2086
-run_boot uefi-secure-hybrid ENFORCED_PARTIAL \
-    -machine q35,smm=on,accel=tcg ${common_args} \
-    -global driver=cfi.pflash01,property=secure,value=on \
-    -drive "if=pflash,format=raw,readonly=on,file=${ovmf_code}" \
-    -drive "if=pflash,format=raw,file=${temp_dir}/OVMF_VARS_HYBRID.fd" \
-    -boot c \
-    -drive "file=${iso},format=raw,if=virtio,readonly=on"
+case "${profile}" in
+    all|uefi-secure-cd|uefi-secure-hybrid)
+        ovmf_code=$(find /usr/share/OVMF /usr/share/ovmf -type f -name 'OVMF_CODE_4M.secboot.fd' -print 2>/dev/null | sort | head -n 1)
+        ovmf_vars=$(find /usr/share/OVMF /usr/share/ovmf -type f -name 'OVMF_VARS_4M.ms.fd' -print 2>/dev/null | sort | head -n 1)
+        if [ -z "${ovmf_code}" ] || [ -z "${ovmf_vars}" ]; then
+            failed=1
+            printf '%s\n' 'Secure Boot OVMF firmware with Microsoft-enrolled VARS is required.' >&2
+            exit 1
+        fi
+        ;;
+esac
 
-printf '%s\n' 'BIOS, UEFI Secure Boot, optical, and ISO-hybrid guest boots passed.'
+if selected uefi-secure-cd; then
+    cp "${ovmf_vars}" "${temp_dir}/OVMF_VARS_CD.fd"
+    # shellcheck disable=SC2086
+    run_boot uefi-secure-cd ENFORCED_PARTIAL \
+        -machine q35,smm=on ${common_args} \
+        -global driver=cfi.pflash01,property=secure,value=on \
+        -drive "if=pflash,format=raw,readonly=on,file=${ovmf_code}" \
+        -drive "if=pflash,format=raw,file=${temp_dir}/OVMF_VARS_CD.fd" \
+        -boot d \
+        -cdrom "${iso}"
+fi
+
+if selected uefi-secure-hybrid; then
+    cp "${ovmf_vars}" "${temp_dir}/OVMF_VARS_HYBRID.fd"
+    # shellcheck disable=SC2086
+    run_boot uefi-secure-hybrid ENFORCED_PARTIAL \
+        -machine q35,smm=on ${common_args} \
+        -global driver=cfi.pflash01,property=secure,value=on \
+        -drive "if=pflash,format=raw,readonly=on,file=${ovmf_code}" \
+        -drive "if=pflash,format=raw,file=${temp_dir}/OVMF_VARS_HYBRID.fd" \
+        -boot c \
+        -drive "file=${iso},format=raw,if=virtio,readonly=on"
+fi
+
+if [ "${profile}" = all ]; then
+    printf '%s\n' 'BIOS, UEFI Secure Boot, optical, and ISO-hybrid guest boots passed.'
+else
+    printf 'Selected QEMU boot profile passed: %s.\n' "${profile}"
+fi

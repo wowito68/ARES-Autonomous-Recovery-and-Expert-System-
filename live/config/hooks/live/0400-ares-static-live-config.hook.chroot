@@ -1,0 +1,36 @@
+#!/bin/sh
+set -eu
+
+# These values are immutable release policy, so generate them once in the
+# SquashFS instead of making live-config repeat expensive package work at
+# every boot.
+for locale in es_MX.UTF-8 en_US.UTF-8; do
+    charset=${locale#*.}
+    if grep -Fqx "# ${locale} ${charset}" /etc/locale.gen; then
+        sed -i "s/^# ${locale} ${charset}$/${locale} ${charset}/" /etc/locale.gen
+    elif ! grep -Fqx "${locale} ${charset}" /etc/locale.gen; then
+        printf '%s %s\n' "${locale}" "${charset}" >> /etc/locale.gen
+    fi
+done
+locale-gen --keep-existing
+printf '%s\n' 'LANG=es_MX.UTF-8' > /etc/default/locale
+
+printf '%s\n' 'America/Mexico_City' > /etc/timezone
+ln -snf /usr/share/zoneinfo/America/Mexico_City /etc/localtime
+
+cat > /etc/default/keyboard <<'EOF'
+# ARES OS immutable keyboard policy.
+XKBMODEL="pc105"
+XKBLAYOUT="latam"
+XKBVARIANT=""
+XKBOPTIONS=""
+BACKSPACE="guess"
+EOF
+
+# live-config checks these state files before running its components.
+mkdir -p /var/lib/live/config
+chmod 0755 /var/lib/live/config
+touch \
+    /var/lib/live/config/keyboard-configuration \
+    /var/lib/live/config/locales \
+    /var/lib/live/config/tzdata

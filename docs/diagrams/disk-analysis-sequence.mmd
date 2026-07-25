@@ -1,0 +1,28 @@
+sequenceDiagram
+    autonumber
+    actor U as Usuario/UI
+    participant API as API local
+    participant CM as Capability Manager
+    participant WF as Workflow Engine
+    participant INV as Read Inventory Action
+    participant ANA as Analyze Action
+    participant KG as Graph Action
+    participant EB as Event Bus
+
+    U->>API: POST storage.disk-analysis<br/>{scope: all_detected}
+    API->>API: Validar esquema cerrado
+    API->>CM: execute(capability_id, input)
+    CM->>WF: workflow server-owned
+    WF->>EB: workflow.started / capability.started
+    WF->>INV: leer inventario público fijo
+    INV-->>WF: dispositivos normalizados
+    WF->>EB: postcheck + action.completed
+    WF->>ANA: analizar evidencia estructurada
+    ANA-->>WF: summary + findings
+    WF->>KG: proyectar discos y particiones
+    KG->>EB: knowledge.graph.updated
+    KG-->>WF: revisión del grafo
+    WF->>EB: workflow.completed / capability.completed
+    WF-->>CM: ejecución auditable
+    CM-->>API: resultado sin Actions privadas
+    API-->>U: resumen, hallazgos y métricas

@@ -7,12 +7,13 @@ name = "ares-backend"
 version = "0.1.0"
 description = "Local control plane for the Autonomous Recovery and Expert System"
 readme = "README.md"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.12,<3.14"
 license = {text = "Proprietary - license pending"}
 authors = [{name = "ARES contributors"}]
 dependencies = [
   "aiosqlite>=0.20,<1",
   "fastapi>=0.115,<1",
+  "httpx>=0.28,<1",
   "pydantic>=2.10,<3",
   "pydantic-settings>=2.7,<3",
   "sqlalchemy[asyncio]>=2.0.36,<3",
@@ -21,7 +22,6 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-  "httpx>=0.28,<1",
   "mypy>=1.14,<2",
   "pytest>=8.3,<9",
   "pytest-asyncio>=0.25,<1",

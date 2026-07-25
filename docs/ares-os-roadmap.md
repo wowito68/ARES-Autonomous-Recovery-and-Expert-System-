@@ -42,7 +42,8 @@ Este workstream corresponde a **ARES — Fase 2: construcción del sistema opera
 
 **Dependencias:** OS1 y paquetes firmados de shim/GRUB/kernel.
 
-**Estado:** configurado; pruebas de ISO y hardware pendientes.
+**Estado:** ISO arrancada desde USB en un equipo físico; queda pendiente cerrar
+la matriz BIOS/UEFI/graphics y automatizar una prueba visual de kiosco.
 
 ## OS3 — Inventario y compatibilidad de hardware
 
@@ -84,7 +85,8 @@ Este workstream corresponde a **ARES — Fase 2: construcción del sistema opera
 
 **Dependencias:** OS1–OS4 y artefactos bloqueados de cada componente.
 
-**Estado:** grafo/unidades preparados; binarios de producto fuera del alcance actual.
+**Estado:** backend y primera UI integrados directamente; paquetes `.deb`,
+APT local firmado, agente, auditor y broker siguen pendientes.
 
 ## OS6 — Packs de modelos y operación offline completa
 
@@ -98,7 +100,8 @@ Este workstream corresponde a **ARES — Fase 2: construcción del sistema opera
 
 **Dependencias:** OS5 y agente determinista probado en el roadmap de aplicación.
 
-**Estado:** diseñado; no implementado en Fase 2.
+**Estado:** adaptador Ollama, estado degradable, chat sin tools y staging por
+SHA-256 implementados. Runtime/pesos, firma, licencia y evaluación pendientes.
 
 ## OS7 — Integridad completa y Secure Boot ARES
 

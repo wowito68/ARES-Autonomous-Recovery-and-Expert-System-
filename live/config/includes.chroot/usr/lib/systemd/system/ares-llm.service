@@ -1,11 +1,11 @@
 [Unit]
 Description=ARES local model runtime
 Documentation=file:/usr/share/doc/ares-os/live-system.md
-ConditionFileIsExecutable=/opt/ares/llm/bin/ares-llm
+ConditionFileIsExecutable=/opt/ares/llm/runtime/bin/ollama
 After=ares-state-setup.service
 
 [Service]
-Type=notify
+Type=simple
 User=ares-llm
 Group=ares-llm
 ExecStart=/opt/ares/llm/bin/ares-llm
@@ -24,6 +24,9 @@ ProtectControlGroups=yes
 RestrictSUIDSGID=yes
 LockPersonality=yes
 CapabilityBoundingSet=
+Environment=HOME=/var/lib/ares/models
+Environment=OLLAMA_HOST=127.0.0.1:11434
+Environment=OLLAMA_MODELS=/var/lib/ares/models
 ReadWritePaths=/var/lib/ares/models /run/ares/llm
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 IPAddressDeny=any

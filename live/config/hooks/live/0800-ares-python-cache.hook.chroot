@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+# live-build removes package bytecode in its generic cleanup hook.  Recreate
+# deterministic, hash-validated caches so the hardware inventory and local API
+# do not compile the standard library or their dependency graph into the RAM
+# overlay during every Live boot.
+stdlib=$(python3 -c 'import sysconfig; print(sysconfig.get_path("stdlib"))')
+python3 -m compileall \
+    -q \
+    --invalidation-mode checked-hash \
+    -j 2 \
+    -x '(^|/)(tests?|__pycache__)(/|$)' \
+    "${stdlib}" \
+    /opt/ares/backend/src \
+    /usr/lib/python3/dist-packages

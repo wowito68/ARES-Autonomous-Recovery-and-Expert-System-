@@ -6,6 +6,8 @@ flowchart TD
     preflightTarget --> networkService[ares-network-policy.service]
     preflightTarget --> stateService[ares-state-setup.service]
     aresTarget --> hardwareService[ares-hardware.service]
+    hardwareService --> enrichmentTimer[ares-hardware-enrichment.timer]
+    enrichmentTimer --> enrichmentService[ares-hardware-enrichment.service]
     aresTarget --> authorityTarget[ares-authority.target]
     aresTarget --> uiTarget[ares-ui.target]
     authorityTarget --> auditSocket[ares-audit.socket]

@@ -1,8 +1,8 @@
 [Unit]
 Description=Publish the ARES platform boot-ready marker
 Documentation=file:/usr/share/doc/ares-os/live-system.md
-Requires=ares.target lightdm.service
-After=ares.target lightdm.service
+Requires=ares.target ares-backend.service lightdm.service
+After=ares.target ares-backend.service lightdm.service
 
 [Service]
 Type=oneshot

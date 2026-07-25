@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+# ConditionNeedsUpdate units compare these files with /usr. Build all mutable
+# release state before creating deterministic markers, so the Live overlay
+# does not rebuild linker/catalog caches on every boot.
+marker_time=${SOURCE_DATE_EPOCH:-0}
+if [ "${marker_time}" -gt 0 ] 2>/dev/null; then
+    touch -d "@${marker_time}" /etc/.updated /var/.updated
+else
+    touch -r /usr /etc/.updated /var/.updated
+fi
+chmod 0644 /etc/.updated /var/.updated

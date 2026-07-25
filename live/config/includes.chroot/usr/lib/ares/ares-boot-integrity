@@ -1,92 +1,68 @@
-#!/usr/bin/python3
-from __future__ import annotations
+#!/bin/sh
+set -eu
 
-import json
-import os
-import pathlib
-import subprocess
-import tempfile
+# Boot integrity is on the critical path. Keep it independent of the Python
+# interpreter so it remains bounded on slow recovery hardware and under TCG.
+runtime_root=${ARES_RUNTIME_ROOT:-/run/ares}
+efi_root=${ARES_EFI_ROOT:-/sys/firmware/efi}
+dmsetup_binary=${ARES_DMSETUP:-/usr/sbin/dmsetup}
+output=${runtime_root}/integrity.json
+temporary=${output}.tmp.$$
+trap 'rm -f -- "${temporary}"' EXIT HUP INT TERM
+umask 022
 
+secure_boot=unavailable
+firmware=bios
+if [ -d "${efi_root}" ]; then
+    firmware=uefi
+    secure_boot=unknown
+    for variable in "${efi_root}"/efivars/SecureBoot-*; do
+        [ -r "${variable}" ] || continue
+        value=$(od -An -t u1 -j 4 -N 1 "${variable}" 2>/dev/null | tr -d ' ')
+        case "${value}" in
+            1) secure_boot=enabled ;;
+            0) secure_boot=disabled ;;
+            *) secure_boot=unknown ;;
+        esac
+        break
+    done
+fi
 
-OUTPUT = pathlib.Path("/run/ares/integrity.json")
+verity=inactive
+if verity_devices=$(timeout 3 "${dmsetup_binary}" ls --target verity 2>/dev/null); then
+    case "${verity_devices}" in
+        ''|*"No devices found"*) verity=inactive ;;
+        *) verity=active ;;
+    esac
+else
+    verity=unknown
+fi
 
-
-def secure_boot_state() -> tuple[str, str]:
-    efi = pathlib.Path("/sys/firmware/efi")
-    if not efi.exists():
-        return "unavailable", "bios"
-    matches = list(pathlib.Path("/sys/firmware/efi/efivars").glob("SecureBoot-*"))
-    for match in matches:
-        try:
-            raw = match.read_bytes()
-        except OSError:
-            continue
-        if len(raw) >= 5:
-            return ("enabled" if raw[4] == 1 else "disabled"), "uefi"
-    return "unknown", "uefi"
-
-
-def verity_state() -> str:
-    try:
-        result = subprocess.run(
-            ["/usr/sbin/dmsetup", "ls", "--target", "verity"],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            timeout=3,
-            check=False,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return "unknown"
-    output = result.stdout.strip()
-    if result.returncode == 0 and output and "No devices found" not in output:
-        return "active"
-    return "inactive"
-
-
-def atomic_write(payload: dict[str, object]) -> None:
-    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(prefix="integrity.", dir=OUTPUT.parent)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(temporary, 0o644)
-        os.replace(temporary, OUTPUT)
-    finally:
-        try:
-            os.unlink(temporary)
-        except FileNotFoundError:
-            pass
-
-
-secure_boot, firmware = secure_boot_state()
-verity = verity_state()
-integrity_failed = verity != "active"
-if integrity_failed:
-    trust = "FAILED"
-elif firmware == "bios":
-    trust = "UNAVAILABLE"
-elif secure_boot == "disabled":
-    trust = "DISABLED"
-elif secure_boot == "enabled" and verity == "active":
+integrity_failed=false
+if [ "${verity}" != active ]; then
+    trust=FAILED
+    integrity_failed=true
+elif [ "${firmware}" = bios ]; then
+    trust=UNAVAILABLE
+elif [ "${secure_boot}" = disabled ]; then
+    trust=DISABLED
+elif [ "${secure_boot}" = enabled ]; then
     # Debian shim/GRUB/kernel are signed, but this development image does not
     # yet authenticate initrd, cmdline and the verity root hash as one UKI.
-    trust = "ENFORCED_PARTIAL"
-else:
-    trust = "ENFORCED_PARTIAL" if secure_boot == "enabled" else "UNKNOWN"
+    trust=ENFORCED_PARTIAL
+else
+    trust=UNKNOWN
+fi
 
-atomic_write(
-    {
-        "schema_version": 1,
-        "firmware": firmware,
-        "secure_boot": secure_boot,
-        "dm_verity": verity,
-        "trust": trust,
-        "full_chain": False,
-    }
-)
-raise SystemExit(1 if integrity_failed else 0)
+mkdir -p "${runtime_root}"
+printf '%s\n' \
+    "{\"schema_version\":1,\"firmware\":\"${firmware}\",\"secure_boot\":\"${secure_boot}\",\"dm_verity\":\"${verity}\",\"trust\":\"${trust}\",\"full_chain\":false}" \
+    > "${temporary}"
+chmod 0644 "${temporary}"
+sync -f "${temporary}"
+mv -f -- "${temporary}" "${output}"
+trap - EXIT HUP INT TERM
+
+if [ "${integrity_failed}" = true ]; then
+    exit 1
+fi

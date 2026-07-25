@@ -21,3 +21,24 @@ def test_settings_are_immutable() -> None:
 
     with pytest.raises(ValidationError):
         settings.database_echo = True
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "https://127.0.0.1:11434",
+        "http://192.168.1.4:11434",
+        "http://user:password@127.0.0.1:11434",
+        "http://127.0.0.1:11434?remote=true",
+        "http://127.0.0.1:11434/#fragment",
+    ],
+)
+def test_ai_endpoint_must_be_plain_http_loopback_without_credentials(endpoint: str) -> None:
+    with pytest.raises(ValidationError, match="ai_base_url"):
+        Settings(ai_base_url=endpoint)
+
+
+def test_ipv6_loopback_ai_endpoint_is_allowed() -> None:
+    settings = Settings(ai_base_url="http://[::1]:11434")
+
+    assert settings.ai_base_url == "http://[::1]:11434"

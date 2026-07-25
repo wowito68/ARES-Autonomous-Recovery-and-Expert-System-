@@ -12,10 +12,21 @@ El proyecto se construye por incrementos verificables. La iteración actual entr
 - el diseño de arquitectura, seguridad, datos, API, agente, herramientas, frontend y sistema Live;
 - las decisiones de arquitectura que bloquean atajos inseguros;
 - el primer componente ejecutable del backend: configuración, ciclo de vida, SQLite, logging estructurado, identificadores de petición y endpoints de salud;
+- el núcleo ARES v2 basado en Capabilities, con Reasoning Engine independiente,
+  workflows auditables, Event Bus y System Knowledge Graph;
+- la primera capability completa `storage.disk-analysis`, pasiva y sin acceso directo
+  a dispositivos;
+- una interfaz local servida por el backend y el primer adaptador de IA local sin
+  Tools;
 - la infraestructura de ARES OS sobre Debian 13 Live: build fijado, BIOS/UEFI, branding, servicios de plataforma e inventario de hardware;
 - pruebas automáticas del componente fundacional.
 
-Autenticación, catálogo de herramientas, agente y frontend de producto todavía no están implementados. El pipeline de ISO sí existe, pero no equivale a un release firmado: persistencia cifrada, cadena de integridad completa y matriz física conservan puertas pendientes. Consulta el [roadmap de ARES OS](docs/ares-os-roadmap.md).
+Autenticación, consentimiento para mutaciones, agente autónomo y las demás familias de
+Capabilities todavía no están implementados. El runtime y los pesos del modelo local
+tampoco se incluyen sin un bundle offline verificado. El pipeline de ISO sí existe,
+pero no equivale a un release firmado: persistencia cifrada, cadena de integridad
+completa y matriz física conservan puertas pendientes. Consulta el
+[roadmap de ARES OS](docs/ares-os-roadmap.md).
 
 ## Principios no negociables
 
@@ -68,6 +79,7 @@ La salida es `iso/ARES.iso`, acompañada por SHA-256, manifest de build y lista 
 ## Documentación
 
 - [Arquitectura](docs/architecture.md)
+- [Arquitectura ARES v2: Capabilities](docs/architecture-v2-capabilities.md)
 - [Modelo de seguridad](docs/security.md)
 - [Agente y herramientas](docs/agent-and-tools.md)
 - [Modelo de datos](docs/data-model.md)

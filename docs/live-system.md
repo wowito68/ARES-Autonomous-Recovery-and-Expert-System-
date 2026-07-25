@@ -1,6 +1,11 @@
 # Arquitectura de ARES OS Live
 
-> Estado de Fase 2: infraestructura implementada y verificable. El repositorio ya contiene el constructor reproducible, configuración Debian Live, menús BIOS/UEFI, branding, preflight systemd, inventario inicial de hardware y una interfaz local provisional. La persistencia cifrada, la cadena de integridad completa, los paquetes del producto y las herramientas de reparación conservan puertas de aceptación pendientes; no se presentan como terminados.
+> Estado: infraestructura Live implementada y probada por primera vez desde USB
+> físico. El repositorio contiene el constructor, Debian Live, BIOS/UEFI,
+> branding, preflight systemd, inventario, backend y una primera interfaz local
+> con chat opcional. La persistencia cifrada, la cadena de integridad completa,
+> el pack redistribuible de modelo y las herramientas de reparación conservan
+> puertas de aceptación pendientes; no se presentan como terminados.
 
 ## 1. Objetivo e invariantes
 
@@ -29,10 +34,12 @@ Invariantes de diseño:
 | Overlay efímero | Implementado por `live-boot` | `nopersistence`, `overlay-size=50%` |
 | Persistencia LUKS2 ligada al USB | Diseño cerrado; activación aún bloqueada | `ares-state-setup` falla a efímero |
 | Branding | Implementado y renderizado en build | `live/branding/`, Plymouth, GRUB, LightDM, XFCE |
-| Inventario de hardware inicial | Implementado | `ares-hardware-inventory` y schema v1 |
+| Inventario de hardware inicial | Implementado | `ares-hardware-boot`, enriquecimiento y schema v1 |
 | Hot-plug y SMART profundo | Diferido | roadmap OS3 |
+| Backend local | Implementado como primera vertical | FastAPI/SQLite, estado del sistema e IA |
+| UI local | Primera versión implementada | Firefox, dashboard, inventario y chat degradable |
+| Runtime/modelo IA | Adaptador y staging implementados; pesos ausentes | loopback, checksums y estado explícito |
 | Servicios ARES futuros | Unidades y dependencias definidas; binarios ausentes se omiten | `ares-*.service` con `ConditionFileIsExecutable` |
-| UI del producto | No implementada | Firefox muestra una página de plataforma provisional |
 | Agente y herramientas de reparación | No implementados ni habilitados | fuera del alcance de Fase 2 |
 
 ## 3. Proceso de construcción
@@ -58,6 +65,11 @@ flowchart LR
 ```bash
 make build-iso
 ```
+
+El constructor mantiene un bloqueo exclusivo por repositorio para impedir dos
+compilaciones simultáneas. La compresión SquashFS usa por defecto dos procesos
+y un caché máximo de 512 MiB; ambos límites pueden ajustarse de forma explícita
+con `ARES_SQUASHFS_PROCESSORS` y `ARES_SQUASHFS_MEMORY`.
 
 El resultado contractual es:
 
@@ -178,17 +190,25 @@ La build de desarrollo solo puede declarar `ENFORCED_PARTIAL`. OS7 añade UKI fi
 
 ### 5.3 initramfs, live-boot y root
 
-`boot=live` activa `live-boot`. El initramfs localiza `/live` en el medio de solo lectura, monta `filesystem.squashfs`, crea upper/work en tmpfs y entrega `/` fusionado. `live-config` crea el usuario `ares`, configura locale, teclado, zona horaria y autologin gráfico.
+`boot=live` activa `live-boot`. El initramfs localiza `/live` en el medio de solo lectura, monta `filesystem.squashfs`, crea upper/work en tmpfs y entrega `/` fusionado. La build crea el usuario bloqueado `ares`, configura locale, teclado, zona horaria y autologin gráfico; el arranque no repite esas mutaciones.
 
 Parámetros comunes:
 
 ```text
 nopersistence noresume
 systemd.gpt_auto=0 rd.systemd.gpt_auto=0 systemd.swap=0
-live-config.nocomponents=sudo,policykit
+live-config.nocomponents
 nottyautologin overlay-size=50%
 dm-verity-oncorruption=restart
 ```
+
+Los componentes inmutables no se regeneran en la USB. El hook versionado
+`0400-ares-static-live-config.hook.chroot` genera `es_MX.UTF-8` y
+`en_US.UTF-8`, fija `America/Mexico_City` y `latam`, y deja sus marcadores en
+el SquashFS. `systemd-sysusers` crea `ares` con UID/GID 1000, contraseña
+bloqueada y sólo los grupos `audio`, `video` y `ares-operators`; LightDM ya
+tiene el autologin local. Xorg/libinput detectan GPU y entrada dinámicamente
+sin que `live-config` reconfigure paquetes en cada boot.
 
 ## 6. Filesystem Live, overlay y almacenamiento
 
@@ -259,6 +279,8 @@ flowchart TD
     preflightTarget --> networkService[ares-network-policy.service]
     preflightTarget --> stateService[ares-state-setup.service]
     aresTarget --> hardwareService[ares-hardware.service]
+    hardwareService --> enrichmentTimer[ares-hardware-enrichment.timer]
+    enrichmentTimer --> enrichmentService[ares-hardware-enrichment.service]
     aresTarget --> authorityTarget[ares-authority.target]
     aresTarget --> uiTarget[ares-ui.target]
     authorityTarget --> auditSocket[ares-audit.socket]
@@ -280,14 +302,45 @@ flowchart TD
 | `ares-boot-integrity.service` | mide firmware, Secure Boot y verity |
 | `ares-host-protect.service` | elimina swap y refuerza RO forense |
 | `ares-network-policy.service` | registra política; un generador enmascara red off |
-| `ares-hardware.service` | inventarios privado y redactado |
-| `ares-kiosk.service` | Firefox local con fallback provisional |
+| `ares-hardware.service` | inventarios de arranque privado y redactado |
+| `ares-hardware-enrichment.timer` | inicia el perfil completo sin bloquear API/UI |
+| `ares-backend.service` | FastAPI/SQLite, assets, resumen público y proxy de IA local |
+| autostart XDG de ARES | Firefox hereda `DISPLAY`/sesión y espera readiness local antes de abrir la UI |
 
 No se usa `systemd-udev-settle`; OS3 añadirá hot-plug incremental.
 
+La medición de integridad también permanece fuera de Python: un colector POSIX
+lee el estado de firmware y Secure Boot y ejecuta `dmsetup` con timeout de tres
+segundos. La unidad completa dispone de un techo de 15 segundos. Esto evita que
+la inicialización del intérprete bloquee indefinidamente `ares-preflight.target`
+en CPUs lentas.
+
+La biblioteca estándar de Python, el backend y sus dependencias se precompilan
+con bytecode de hash verificado después de la limpieza genérica de
+`live-build`. Así, cada arranque Live no vuelve a compilar `concurrent.futures`,
+FastAPI, Pydantic y SQLAlchemy en el overlay de RAM. La generación crítica de
+inventario usa un colector POSIX de solo `/proc` y sysfs, no inicia Python ni
+ejecuta herramientas de sondeo y conserva un techo de 30 segundos. Publica CPU,
+RAM, discos, interfaces, GPU/PCI y firmware suficientes para declarar lista la
+plataforma. Una unidad posterior publica atómicamente la generación completa
+con DMI, USB, Wi-Fi, Bluetooth, sensores, módulos y el resto de sondas sin
+bloquear la API ni la interfaz.
+Ambas unidades conservan `CAP_DAC_OVERRIDE` porque la raíz del servicio debe
+publicar en directorios propiedad de `ares-hardware`; `ProtectSystem=strict`,
+`ProtectHome=yes` y `ReadWritePaths=/run/ares/hardware` limitan esa capacidad
+al runtime volátil del inventario.
+El lanzador gráfico espera hasta 120 segundos al endpoint local; la interfaz
+funcional siempre se abre desde `http://127.0.0.1:8000/`, de modo que assets y
+API comparten origen. Solo ante un fallo sostenido se muestra el dashboard
+estático de contingencia.
+
 ### 8.2 Preparadas, no simuladas
 
-`ares-backend`, `ares-agent`, `ares-frontend`, `ares-llm`, `ares-monitor`, `ares-audit`, `ares-tool-broker`, `ares-consent-agent` y `ares-update` usan `ConditionFileIsExecutable`. Sin paquete, systemd las omite: no hay procesos falsos.
+`ares-agent`, `ares-frontend`, `ares-llm`, `ares-monitor`, `ares-audit`,
+`ares-tool-broker`, `ares-consent-agent` y `ares-update` usan
+`ConditionFileIsExecutable`. Sin binario, systemd las omite: no hay procesos
+falsos. El backend ya se incorpora automáticamente desde `backend/src` y usa
+dependencias Python de Debian Trixie.
 
 - broker/consentimiento requieren audit writer y `After=` explícito;
 - API solo quiere auditoría/hardware y conserva UI degradada;
@@ -307,8 +360,8 @@ Cuentas separadas: `ares-api`, `ares-agent`, `ares-llm`, `ares-monitor`, `ares-u
 ```mermaid
 flowchart LR
     kernelData[Kernel, proc, sysfs y udev] --> inventoryService[ares-hardware.service]
-    inventoryService --> fixedProbes[Probes argv fijo y timeout]
-    fixedProbes --> normalizer[Normalizacion y limites]
+    inventoryService --> bootCollector[Colector POSIX procfs y sysfs]
+    bootCollector --> normalizer[Normalizacion y limites]
     normalizer --> privateView[Inventario privado 0640]
     normalizer --> redactor[Redaccion HMAC por arranque]
     redactor --> publicView[Inventario publico 0640]
@@ -323,12 +376,12 @@ flowchart LR
 
 | Dominio | Fuente | Regla |
 |---|---|---|
-| CPU/RAM | `lscpu`, `/proc/meminfo`, DMI sysfs | seriales solo privados |
-| GPU/PCI | `lspci`, driver sysfs | no inicializa CUDA/OpenGL |
-| Discos | `lsblk`, `findmnt` | no monta ni activa swap |
+| CPU/RAM | arranque: procfs; completo: `lscpu`, `/proc/meminfo`, DMI sysfs | seriales solo privados |
+| GPU/PCI | arranque: sysfs; completo: `lspci` y driver sysfs | no inicializa CUDA/OpenGL |
+| Discos | arranque: sysfs; completo: `lsblk`, `findmnt` | no monta ni activa swap |
 | SMART | `smartctl --scan` | no `--scan-open`, tests ni wake; salud diferida |
-| NVMe | `nvme list -o json` | lectura con timeout |
-| Red/Wi-Fi | `ip -j`, `iw dev`, `rfkill` | no DHCP ni escaneo SSID |
+| NVMe | diferido por política | no abre controladores durante el inventario inicial |
+| Red/Wi-Fi | arranque: sysfs; completo: `ip -j`, `iw dev`, `rfkill` | no DHCP ni escaneo SSID |
 | Bluetooth/USB | BlueZ, `lsusb` | no discovery/pairing; strings hostiles |
 | EFI | efivars, `mokutil`, `efibootmgr` | nunca modifica NVRAM/MOK |
 | Batería/sensores | sysfs, `sensors -j` | nunca `sensors-detect` |
@@ -380,8 +433,8 @@ Firmar el ISO, Secure Boot, dm-verity, LUKS2 y el ledger resuelven amenazas dist
 
 | Componente | Formato |
 |---|---|
-| Backend Python 3.12 | `.deb` con runtime `/opt/ares/runtime`, lock y hashes |
-| Frontend | assets Vite compilados; sin Node/npm |
+| Backend Python | fuente ARES + paquetes Python fijados por el snapshot Debian |
+| Frontend | assets estáticos sin Node/npm; SPA empaquetada en fase posterior |
 | Agente/broker | `.deb` firmados y manifiesto root-owned |
 | LLM | runtime fijado, solo loopback |
 | Modelos | packs firmados con digest, licencia y requisitos |
@@ -390,7 +443,9 @@ Firmar el ISO, Secure Boot, dm-verity, LUKS2 y el ledger resuelven amenazas dist
 | Drivers | paquetes Debian y licencias inventariadas |
 | Updates | APT temporal desde pack local firmado, sin timer de red |
 
-Fase 2 no incluye modelo ni simula uno. El perfil full se habilitará con un pack redistribuible verificado. CPU será garantizado; GPU opcional.
+La imagen base no simula ni descarga un modelo. Sí incluye el control plane, el
+adaptador Ollama y un staging verificado opcional. El perfil IA se habilitará
+solo con un pack redistribuible aprobado. CPU será garantizado; GPU opcional.
 
 ## 14. Rendimiento
 

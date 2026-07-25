@@ -1,5 +1,5 @@
 [Unit]
-Description=Build the initial ARES hardware inventory
+Description=Build the boot-critical ARES hardware inventory
 Documentation=file:/usr/share/doc/ares-os/live-system.md
 Requires=ares-preflight.target
 After=systemd-tmpfiles-setup.service systemd-udevd.service ares-preflight.target
@@ -7,8 +7,8 @@ Before=ares-backend.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/lib/ares/ares-hardware-inventory
-TimeoutStartSec=20s
+ExecStart=/usr/lib/ares/ares-hardware-boot
+TimeoutStartSec=30s
 RemainAfterExit=yes
 UMask=0027
 NoNewPrivileges=yes
@@ -22,5 +22,5 @@ PrivateTmp=yes
 RestrictSUIDSGID=yes
 LockPersonality=yes
 RestrictAddressFamilies=AF_UNIX AF_NETLINK
-CapabilityBoundingSet=CAP_CHOWN CAP_DAC_READ_SEARCH CAP_FOWNER
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER
 ReadWritePaths=/run/ares/hardware

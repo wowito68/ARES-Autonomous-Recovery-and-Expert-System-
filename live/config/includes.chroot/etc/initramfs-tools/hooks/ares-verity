@@ -1,0 +1,30 @@
+#!/bin/sh
+set -eu
+
+PREREQ=""
+
+prereqs()
+{
+    printf '%s\n' "${PREREQ}"
+}
+
+case "${1:-}" in
+    prereqs)
+        prereqs
+        exit 0
+        ;;
+esac
+
+. /usr/share/initramfs-tools/hook-functions
+
+# libmount loads libcryptsetup dynamically when it receives verity.* mount
+# options.  initramfs-tools cannot discover that dlopen dependency through
+# ldd, so copy the SONAME and its dependency closure explicitly.
+libcryptsetup=/usr/lib/x86_64-linux-gnu/libcryptsetup.so.12
+if [ ! -e "${libcryptsetup}" ]; then
+    printf 'Required dm-verity library is missing: %s\n' "${libcryptsetup}" >&2
+    exit 1
+fi
+
+copy_exec "${libcryptsetup}"
+manual_add_modules dm_verity

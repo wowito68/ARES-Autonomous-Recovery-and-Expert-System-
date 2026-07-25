@@ -1,0 +1,18 @@
+flowchart LR
+    User[Usuario] --> UI[Interfaz local]
+    UI --> LLM[LLM local<br/>sin Tools]
+    UI --> RE[Reasoning Engine]
+    LLM -. objetivo o explicación .-> RE
+    RE -->|ID de Capability| CM[Capability Manager<br/>registro sellado]
+    CM --> WF[Workflow Engine]
+    WF --> A1[Actions privadas]
+    A1 --> HW[Inventario público<br/>ares-hardware]
+    A1 --> KG[System Knowledge Graph]
+    WF --> EB[Event Bus<br/>append-first]
+    EB --> JL[(events.jsonl)]
+    KG --> GS[(knowledge-graph.json)]
+
+    classDef trust fill:#0d2736,stroke:#35c8e3,color:#edf7ff;
+    classDef private fill:#281a08,stroke:#fbbf66,color:#fff0d1;
+    class LLM,RE,CM,WF trust;
+    class A1,HW,KG,EB private;

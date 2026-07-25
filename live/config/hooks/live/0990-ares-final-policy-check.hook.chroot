@@ -3,11 +3,25 @@ set -eu
 
 for required in \
     /etc/nftables.conf \
+    /etc/initramfs-tools/hooks/ares-verity \
+    /opt/ares/backend/bin/ares-api \
+    /opt/ares/backend/src/ares/main.py \
+    /opt/ares/backend/src/ares/capabilities/manager.py \
+    /opt/ares/backend/src/ares/capabilities/plugins/disk_analysis.py \
+    /opt/ares/backend/src/ares/events/bus.py \
+    /opt/ares/backend/src/ares/knowledge/graph.py \
+    /opt/ares/backend/src/ares/reasoning/engine.py \
+    /opt/ares/backend/src/ares/workflows/engine.py \
     /usr/lib/ares/ares-boot-ready \
+    /usr/lib/ares/ares-hardware-boot \
     /usr/lib/ares/ares-hardware-inventory \
     /usr/lib/ares/ares-mode-setup \
+    /usr/lib/systemd/system/ares-hardware-enrichment.service \
+    /usr/lib/systemd/system/ares-hardware-enrichment.timer \
     /usr/lib/systemd/system/ares.target \
     /usr/share/ares/platform/index.html \
+    /usr/share/ares/platform/app.js \
+    /usr/share/ares/platform/unavailable.html \
     /usr/share/plymouth/themes/ares/ares.plymouth; do
     if [ ! -e "${required}" ]; then
         printf 'Required ARES runtime file is missing: %s\n' "${required}" >&2
@@ -15,7 +29,88 @@ for required in \
     fi
 done
 
-for unit in ares.target ares-boot-ready.service lightdm.service nftables.service; do
+initramfs_found=false
+for initramfs in /boot/initrd.img-*; do
+    [ -f "${initramfs}" ] || continue
+    initramfs_found=true
+    if ! lsinitramfs "${initramfs}" \
+        | grep -E '(^|/)libcryptsetup\.so\.12$' >/dev/null; then
+        printf 'The initramfs lacks the dm-verity dlopen dependency: %s\n' \
+            "${initramfs}" >&2
+        exit 1
+    fi
+done
+if [ "${initramfs_found}" != true ]; then
+    printf '%s\n' 'No initramfs was available for final policy validation.' >&2
+    exit 1
+fi
+
+if ! find /opt/ares/backend/src/ares/__pycache__ \
+    -type f -name 'main.cpython-*.pyc' -size +0c -print -quit \
+    | grep -q .; then
+    printf '%s\n' 'The ARES backend lacks deterministic precompiled bytecode.' >&2
+    exit 1
+fi
+
+stdlib=$(python3 -c 'import sysconfig; print(sysconfig.get_path("stdlib"))')
+if ! find "${stdlib}/concurrent/futures/__pycache__" \
+    -type f -name 'thread.cpython-*.pyc' -size +0c -print -quit \
+    | grep -q .; then
+    printf '%s\n' 'The Python standard library lacks deterministic precompiled bytecode.' >&2
+    exit 1
+fi
+
+if ! grep -Fqx 'LANG=es_MX.UTF-8' /etc/default/locale; then
+    printf '%s\n' 'The static Live locale policy was not applied.' >&2
+    exit 1
+fi
+if ! grep -Fqx 'XKBLAYOUT="latam"' /etc/default/keyboard; then
+    printf '%s\n' 'The static Live keyboard policy was not applied.' >&2
+    exit 1
+fi
+if [ "$(readlink /etc/localtime 2>/dev/null || true)" != \
+    /usr/share/zoneinfo/America/Mexico_City ]; then
+    printf '%s\n' 'The static Live timezone policy was not applied.' >&2
+    exit 1
+fi
+for component in keyboard-configuration locales tzdata; do
+    if [ ! -f "/var/lib/live/config/${component}" ]; then
+        printf 'Static live-config component is not marked complete: %s\n' \
+            "${component}" >&2
+        exit 1
+    fi
+done
+
+if [ "$(id -u ares)" != 1000 ] || [ "$(id -g ares)" != 1000 ]; then
+    printf '%s\n' 'The immutable Live operator account is missing or has an unsafe ID.' >&2
+    exit 1
+fi
+ares_groups=$(id -nG ares)
+for required_group in audio video ares-operators; do
+    if ! printf '%s\n' "${ares_groups}" \
+        | grep -Eq "(^| )${required_group}( |$)"; then
+        printf 'The Live operator lacks a required group: %s\n' \
+            "${required_group}" >&2
+        exit 1
+    fi
+done
+if ! awk -F: '$1 == "ares" && $2 ~ /^!/ { found=1 } END { exit !found }' /etc/shadow; then
+    printf '%s\n' 'The Live operator password must remain locked.' >&2
+    exit 1
+fi
+for marker in /etc/.updated /var/.updated; do
+    if [ ! -f "${marker}" ]; then
+        printf 'A deterministic update marker is missing: %s\n' "${marker}" >&2
+        exit 1
+    fi
+done
+
+for unit in \
+    ares.target \
+    ares-boot-ready.service \
+    ares-hardware-enrichment.timer \
+    lightdm.service \
+    nftables.service; do
     if [ "$(systemctl is-enabled "${unit}" 2>/dev/null || true)" != enabled ]; then
         printf 'Required boot unit is not enabled: %s\n' "${unit}" >&2
         exit 1
@@ -28,10 +123,12 @@ for unit in \
     apt-daily-upgrade.service \
     apt-daily-upgrade.timer \
     bluetooth.service \
+    console-setup.service \
     cron.service \
     e2scrub_all.timer \
     e2scrub_reap.service \
     fstrim.timer \
+    keyboard-setup.service \
     lm-sensors.service \
     nvmefc-boot-connections.service \
     nvmf-autoconnect.service \
@@ -66,7 +163,7 @@ for rule in \
     fi
 done
 
-if getent group disk | grep -Eq '(^|,)ares(,|$)'; then
+if printf '%s\n' "${ares_groups}" | grep -Eq '(^| )disk( |$)'; then
     printf '%s\n' 'The live user must not be a member of disk.' >&2
     exit 1
 fi
@@ -90,6 +187,13 @@ for package in firmware-b43-installer firmware-b43legacy-installer; do
         exit 1
     fi
 done
+
+if [ -x /opt/ares/llm/runtime/bin/ollama ]; then
+    if [ ! -d /var/lib/ares/models ]; then
+        printf '%s\n' 'The bundled AI runtime has no local model store.' >&2
+        exit 1
+    fi
+fi
 
 if find /etc/apt/sources.list.d -type f -print -quit | grep -q . || \
    grep -Eq '^[[:space:]]*deb([[:space:]]|$)' /etc/apt/sources.list; then

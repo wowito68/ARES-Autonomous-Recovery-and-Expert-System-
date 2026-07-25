@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+export PYTHONPATH=/opt/ares/backend/src
+
+exec /usr/bin/python3 -m uvicorn ares.main:create_app \
+    --factory \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --no-access-log

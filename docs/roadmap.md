@@ -41,6 +41,10 @@ Puerta: funciona con backend real; inyección, herramienta desconocida, falta de
 
 Puerta: suites deterministas demuestran que el modelo no ejecuta, aprueba ni afirma resultados sin evidencia; operación útil con Ollama caído.
 
+Estado parcial: ya existe el adaptador loopback, estado de runtime/modelo, chat
+sin tools y UI degradable. Todavía faltan el pack redistribuible, modelo por
+digest, orquestador/evidencias y la puerta determinista completa.
+
 ## Fase 4 — Broker y consentimiento independiente
 
 - Protocolo por socket Unix, peer credentials y manifiesto.

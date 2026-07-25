@@ -6,6 +6,7 @@ systemd-tmpfiles --create /usr/lib/tmpfiles.d/ares.conf
 
 systemctl enable ares.target
 systemctl enable ares-boot-ready.service
+systemctl enable ares-hardware-enrichment.timer
 systemctl enable lightdm.service
 systemctl enable nftables.service
 systemctl set-default graphical.target
@@ -43,8 +44,10 @@ done
 
 for unit in \
     cron.service \
+    console-setup.service \
     e2scrub_reap.service \
     fstrim.timer \
+    keyboard-setup.service \
     nvmf-connect-nbft.service \
     nvmf-connect.target \
     nvmf-connect@.service \

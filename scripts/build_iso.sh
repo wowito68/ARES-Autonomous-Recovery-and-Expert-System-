@@ -10,6 +10,8 @@ Environment:
   ARES_CLEAN_BUILD       1 to use an empty live-build cache
   ARES_REQUIRE_CLEAN     1 to reject a dirty Git worktree
   ARES_REUSE_BUILDER     1 to reuse an already verified pinned builder image
+  ARES_SQUASHFS_PROCESSORS  compression workers (default: 2)
+  ARES_SQUASHFS_MEMORY      compression cache limit (default: 512M)
 EOF
 }
 
@@ -57,6 +59,34 @@ esac
 output_dir=${ARES_OUTPUT_DIR:-"${repo_root}/iso"}
 persistent_cache="${repo_root}/live/.cache"
 mkdir -p "${output_dir}" "${repo_root}/live/.build" "${persistent_cache}"
+
+if ! command -v flock >/dev/null 2>&1; then
+    printf '%s\n' 'flock is required to serialize ARES ISO builds.' >&2
+    exit 1
+fi
+exec 9>"${repo_root}/live/.build/build.lock"
+if ! flock -n 9; then
+    printf '%s\n' 'Another ARES ISO build is already running for this repository.' >&2
+    exit 1
+fi
+
+squashfs_processors=${ARES_SQUASHFS_PROCESSORS:-2}
+squashfs_memory=${ARES_SQUASHFS_MEMORY:-512M}
+case "${squashfs_processors}" in
+    *[!0-9]*|'')
+        printf '%s\n' 'ARES_SQUASHFS_PROCESSORS must be a positive integer.' >&2
+        exit 1
+        ;;
+esac
+if [ "${squashfs_processors}" -lt 1 ]; then
+    printf '%s\n' 'ARES_SQUASHFS_PROCESSORS must be a positive integer.' >&2
+    exit 1
+fi
+if ! printf '%s\n' "${squashfs_memory}" | grep -Eq '^[1-9][0-9]*[KMGkmg]?$'; then
+    printf '%s\n' 'ARES_SQUASHFS_MEMORY must be a size such as 512M or 1G.' >&2
+    exit 1
+fi
+
 output_dir=$(CDPATH= cd -- "${output_dir}" && pwd)
 work_dir=$(mktemp -d "${repo_root}/live/.build/work.XXXXXX")
 if [ "${ARES_CLEAN_BUILD:-0}" = "1" ]; then
@@ -165,6 +195,7 @@ run_builder() {
         --env "HOST_GID=$(id -g)" \
         --env "ARES_KEEP_WORK=${keep_work}" \
         --env "ARES_PERSIST_CACHE=${persist_cache}" \
+        --env "MKSQUASHFS_OPTIONS=-processors ${squashfs_processors} -mem ${squashfs_memory}" \
         "${builder_image}" \
         /workspace/scripts/build_live_in_container.sh "$@"
 }

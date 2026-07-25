@@ -1,0 +1,6 @@
+flowchart LR
+    browser[Firefox kiosco<br>usuario ares] -->|HTTP mismo origen| api[FastAPI<br>usuario ares-api]
+    api -->|HTTP loopback<br>sin proxy| runtime[Ollama<br>usuario ares-llm]
+    runtime --> model[Modelo offline<br>var/lib/ares/models]
+    api --> publicState[Estado publico<br>run/ares]
+    runtime -. bloqueado .-> internet[Internet]
