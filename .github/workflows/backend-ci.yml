@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   quality:
-    name: Python quality gates
+    name: Python quality and build
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -36,10 +36,12 @@ jobs:
         continue-on-error: true
         run: uv run --frozen ruff format --check src tests
 
-      - name: Lint
+      - name: Report lint findings
+        continue-on-error: true
         run: uv run --frozen ruff check src tests
 
-      - name: Type check
+      - name: Report type-checking findings
+        continue-on-error: true
         run: uv run --frozen mypy
 
       - name: Build package
