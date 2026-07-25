@@ -2,19 +2,26 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Protocol
+
+from pydantic import BaseModel
 
 from ares.capabilities.models import CapabilityMetadata, PluginManifest
 from ares.workflows import WorkflowDefinition
 
 
 class Capability(Protocol):
-    """Build a workflow from validated semantic input."""
+    """Validate semantic input and build a private workflow.
+
+    Capabilities expose a typed input model to the core. They never execute a
+    command and never accept an action/tool identifier from a client or LLM.
+    """
 
     metadata: CapabilityMetadata
+    input_model: type[BaseModel]
 
-    def build_workflow(self, payload: dict[str, Any]) -> WorkflowDefinition:
-        """Return a server-owned plan; payload can never contain a command."""
+    def build_workflow(self, payload: BaseModel) -> WorkflowDefinition:
+        """Return a server-owned plan from already validated semantic input."""
 
 
 class CapabilityPlugin(Protocol):
