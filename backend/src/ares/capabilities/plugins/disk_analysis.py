@@ -71,6 +71,7 @@ class _GraphPostcheck:
 class DiskAnalysisCapability:
     """Compose private read/analyze/graph actions into one public capability."""
 
+    input_model = DiskAnalysisInput
     metadata = CapabilityMetadata(
         id="storage.disk-analysis",
         version="1.0.0",
@@ -146,8 +147,10 @@ class DiskAnalysisCapability:
         self._analyze = AnalyzeDiskInventoryAction()
         self._update_graph = UpdateStorageGraphAction()
 
-    def build_workflow(self, payload: dict[str, Any]) -> WorkflowDefinition:
-        DiskAnalysisInput.model_validate(payload)
+    def build_workflow(self, payload: BaseModel) -> WorkflowDefinition:
+        validated = DiskAnalysisInput.model_validate(payload)
+        if validated.scope != "all_detected":
+            raise ValueError("unsupported disk analysis scope")
         read_step = WorkflowStep(
             id="read-inventory",
             action=self._read,

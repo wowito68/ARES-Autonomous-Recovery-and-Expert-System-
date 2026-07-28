@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -123,3 +123,15 @@ class PluginManifest(BaseModel):
     dependencies: tuple[str, ...] = ()
     os_compatibility: OSCompatibility
     capabilities: tuple[str, ...]
+
+
+class CapabilityDescriptor(BaseModel):
+    """Generated documentation for one installed capability version."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    metadata: CapabilityMetadata
+    input_schema: dict[str, Any]
+    plugin_id: str
+    plugin_version: str
+    active: bool

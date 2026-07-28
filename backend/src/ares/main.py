@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from ares.api.router import api_router
-from ares.capabilities import CapabilityManager
+from ares.capabilities import CapabilityManager, discover_plugins
 from ares.capabilities.plugins import DiskAnalysisPlugin
 from ares.config import Environment, Settings, get_settings
 from ares.core.logging import configure_logging
@@ -19,6 +19,7 @@ from ares.database import Database
 from ares.events import EventBus, JsonlEventSink
 from ares.knowledge import KnowledgeGraph
 from ares.llm import AIRuntime, OllamaRuntime
+from ares.planner import Planner
 from ares.reasoning import ReasoningEngine
 from ares.workflows import WorkflowEngine
 
@@ -52,15 +53,21 @@ def create_app(
         workflow_engine,
         live_mode=_read_live_mode(resolved_settings),
     )
+    builtins = (
+        DiskAnalysisPlugin(
+            resolved_settings.runtime_state_dir / "hardware/public/inventory-v1.json"
+        ),
+    )
     capability_manager.load(
-        (
-            DiskAnalysisPlugin(
-                resolved_settings.runtime_state_dir / "hardware/public/inventory-v1.json"
-            ),
+        discover_plugins(
+            builtins,
+            entry_point_group=resolved_settings.capability_plugin_entrypoint_group,
+            allowed_entry_points=resolved_settings.capability_plugin_allowlist,
         )
     )
     capability_manager.seal()
     reasoning_engine = ReasoningEngine(capability_manager)
+    planner = Planner(reasoning_engine, capability_manager)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -92,6 +99,7 @@ def create_app(
     application.state.workflow_engine = workflow_engine
     application.state.capability_manager = capability_manager
     application.state.reasoning_engine = reasoning_engine
+    application.state.planner = planner
     application.add_middleware(RequestContextMiddleware)
     install_problem_handlers(application)
     application.include_router(api_router, prefix=resolved_settings.api_prefix)

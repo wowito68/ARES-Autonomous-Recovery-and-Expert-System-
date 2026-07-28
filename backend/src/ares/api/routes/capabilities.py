@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Query, Request
-from pydantic import BaseModel, ConfigDict
+from fastapi import APIRouter, Body, Query, Request
+from fastapi.exceptions import RequestValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
-from ares.capabilities import CapabilityCategory, CapabilityManager, CapabilityMetadata
+from ares.capabilities import CapabilityCategory, CapabilityDescriptor, CapabilityManager
 from ares.core.problems import AresProblem, ProblemDetail
 from ares.workflows import WorkflowEngine, WorkflowExecution
 
@@ -16,7 +17,7 @@ router = APIRouter()
 
 
 class PublicCapability(BaseModel):
-    """Capability-level contract; private actions and tools remain hidden."""
+    """Generated capability documentation; actions and tools remain hidden."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -31,13 +32,19 @@ class PublicCapability(BaseModel):
     estimated_duration_seconds: float
     required_permissions: tuple[str, ...]
     required_evidence: tuple[str, ...]
+    dependencies: tuple[str, ...]
     postchecks: tuple[str, ...]
     rollback_strategy: str
     emitted_events: tuple[str, ...]
     metrics: tuple[str, ...]
+    input_schema: dict[str, Any]
+    plugin_id: str
+    plugin_version: str
+    active: bool
 
     @classmethod
-    def from_metadata(cls, metadata: CapabilityMetadata) -> PublicCapability:
+    def from_descriptor(cls, descriptor: CapabilityDescriptor) -> PublicCapability:
+        metadata = descriptor.metadata
         return cls(
             id=metadata.id,
             version=metadata.version,
@@ -50,10 +57,15 @@ class PublicCapability(BaseModel):
             estimated_duration_seconds=metadata.estimated_duration_seconds,
             required_permissions=tuple(item.id for item in metadata.permissions),
             required_evidence=metadata.required_evidence,
+            dependencies=metadata.dependencies,
             postchecks=metadata.postchecks,
             rollback_strategy=metadata.rollback.strategy,
             emitted_events=metadata.emitted_events,
             metrics=metadata.metrics,
+            input_schema=descriptor.input_schema,
+            plugin_id=descriptor.plugin_id,
+            plugin_version=descriptor.plugin_version,
+            active=descriptor.active,
         )
 
 
@@ -64,14 +76,6 @@ class CapabilityCatalog(BaseModel):
 
     capabilities: tuple[PublicCapability, ...]
     count: int
-
-
-class CapabilityExecutionRequest(BaseModel):
-    """No path, executable, argument or shell field exists."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    scope: Literal["all_detected"] = "all_detected"
 
 
 class PublicStepExecution(BaseModel):
@@ -142,8 +146,8 @@ async def catalog(
     category: CapabilityCategory | None = None,
 ) -> CapabilityCatalog:
     matches = tuple(
-        PublicCapability.from_metadata(metadata)
-        for metadata in _manager(request).catalog(query=query, category=category)
+        PublicCapability.from_descriptor(descriptor)
+        for descriptor in _manager(request).descriptors(query=query, category=category)
     )
     return CapabilityCatalog(capabilities=matches, count=len(matches))
 
@@ -172,6 +176,19 @@ async def execution(execution_id: str, request: Request) -> PublicWorkflowExecut
 
 
 @router.get(
+    "/{capability_id}/versions",
+    response_model=CapabilityCatalog,
+    summary="List installed versions of a capability",
+)
+async def capability_versions(capability_id: str, request: Request) -> CapabilityCatalog:
+    descriptors = _manager(request).versions(capability_id)
+    if not descriptors:
+        raise _not_found()
+    capabilities = tuple(PublicCapability.from_descriptor(item) for item in descriptors)
+    return CapabilityCatalog(capabilities=capabilities, count=len(capabilities))
+
+
+@router.get(
     "/{capability_id}",
     response_model=PublicCapability,
     responses={
@@ -180,13 +197,17 @@ async def execution(execution_id: str, request: Request) -> PublicWorkflowExecut
             "content": {"application/problem+json": {"schema": ProblemDetail.model_json_schema()}},
         }
     },
-    summary="Read one installed capability",
+    summary="Read generated documentation for one installed capability",
 )
-async def capability(capability_id: str, request: Request) -> PublicCapability:
-    metadata = _manager(request).get(capability_id)
-    if metadata is None:
+async def capability(
+    capability_id: str,
+    request: Request,
+    version: Annotated[str | None, Query(pattern=r"^[0-9]+\.[0-9]+\.[0-9]+$")] = None,
+) -> PublicCapability:
+    descriptor = _manager(request).descriptor(capability_id, version=version)
+    if descriptor is None:
         raise _not_found()
-    return PublicCapability.from_metadata(metadata)
+    return PublicCapability.from_descriptor(descriptor)
 
 
 @router.post(
@@ -198,17 +219,26 @@ async def capability(capability_id: str, request: Request) -> PublicCapability:
             "content": {"application/problem+json": {"schema": ProblemDetail.model_json_schema()}},
         }
     },
-    summary="Execute a validated capability workflow",
+    summary="Execute a capability-specific validated workflow",
 )
 async def execute_capability(
     capability_id: str,
-    payload: CapabilityExecutionRequest,
     request: Request,
+    payload: Annotated[dict[str, Any], Body()],
+    version: Annotated[str | None, Query(pattern=r"^[0-9]+\.[0-9]+\.[0-9]+$")] = None,
 ) -> PublicWorkflowExecution:
     manager = _manager(request)
-    if manager.get(capability_id) is None:
+    if manager.get(capability_id, version=version) is None:
         raise _not_found()
-    record = await manager.execute(capability_id, payload.model_dump(mode="json"))
+    try:
+        record = await manager.execute(capability_id, payload, version=version)
+    except ValidationError as exc:
+        errors = []
+        for error in exc.errors():
+            normalized = dict(error)
+            normalized["loc"] = ("body", *error.get("loc", ()))
+            errors.append(normalized)
+        raise RequestValidationError(errors) from exc
     return PublicWorkflowExecution.from_execution(record)
 
 

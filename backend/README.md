@@ -10,7 +10,10 @@ La entrega actual contiene:
 - assets estáticos servidos bajo el mismo origen;
 - adaptador estricto a Ollama por loopback;
 - chat acotado, sin tools ni privilegios;
-- núcleo v2 de Capabilities, Workflows, Event Bus, Reasoning Engine y Knowledge Graph;
+- núcleo v2 de Capabilities, Planner, Workflows, Event Bus, Reasoning Engine y
+  Knowledge Graph;
+- contratos de entrada tipados y documentación JSON Schema por Capability;
+- registro versionado y descubrimiento de plugins mediante entry points allow-listed;
 - capability pasiva `storage.disk-analysis` de extremo a extremo.
 
 La operación disponible sólo analiza el inventario público ya recolectado: no abre
@@ -28,4 +31,6 @@ Consulta el [README principal](../README.md), la
 [arquitectura](../docs/architecture.md) y el
 [contrato de IA local](../docs/local-ai.md). La evolución de Tools a Capabilities,
 incluyendo el flujo Disk Analysis, se documenta en
-[ARES v2](../docs/architecture-v2-capabilities.md).
+[ARES v2](../docs/architecture-v2-capabilities.md). El cierre de las fronteras de
+entrada, versionado, plugins y Planner se documenta en
+[extensibilidad ARES v2](../docs/architecture-v2-extensibility.md).

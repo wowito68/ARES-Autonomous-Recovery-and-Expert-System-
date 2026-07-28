@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
@@ -12,6 +13,8 @@ from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from ares import __version__
+
+_ENTRY_POINT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
 
 class Environment(StrEnum):
@@ -51,6 +54,10 @@ class Settings(BaseSettings):
     readiness_timeout_seconds: Annotated[float, Field(gt=0, le=30)] = 2.0
     runtime_state_dir: Path = Path("/run/ares")
     capability_state_dir: Path | None = None
+    capability_plugin_entrypoint_group: Annotated[
+        str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_.-]{2,127}$")
+    ] = "ares.capabilities"
+    capability_plugin_allowlist: tuple[str, ...] = ()
     static_dir: Path | None = None
     ai_base_url: str = "http://127.0.0.1:11434"
     ai_model: Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")] = (
@@ -66,7 +73,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def reject_unsafe_production_diagnostics(self) -> Self:
-        """Prevent SQL values from being logged by a production process."""
+        """Prevent unsafe diagnostics and untrusted plugin discovery policy."""
 
         if self.environment is Environment.PRODUCTION and self.database_echo:
             raise ValueError("database_echo must be disabled in production")
@@ -79,6 +86,13 @@ class Settings(BaseSettings):
             raise ValueError("ai_base_url must be an HTTP loopback endpoint")
         if endpoint.username or endpoint.password or endpoint.query or endpoint.fragment:
             raise ValueError("ai_base_url must not contain credentials, query, or fragment")
+        if len(set(self.capability_plugin_allowlist)) != len(self.capability_plugin_allowlist):
+            raise ValueError("capability_plugin_allowlist contains duplicates")
+        if any(
+            _ENTRY_POINT_NAME.fullmatch(name) is None
+            for name in self.capability_plugin_allowlist
+        ):
+            raise ValueError("capability_plugin_allowlist contains an invalid entry-point name")
         return self
 
 
