@@ -6,10 +6,12 @@ for required in \
     /etc/initramfs-tools/hooks/ares-verity \
     /opt/ares/backend/bin/ares-api \
     /opt/ares/backend/src/ares/main.py \
+    /opt/ares/backend/src/ares/capabilities/discovery.py \
     /opt/ares/backend/src/ares/capabilities/manager.py \
     /opt/ares/backend/src/ares/capabilities/plugins/disk_analysis.py \
     /opt/ares/backend/src/ares/events/bus.py \
     /opt/ares/backend/src/ares/knowledge/graph.py \
+    /opt/ares/backend/src/ares/planner/engine.py \
     /opt/ares/backend/src/ares/reasoning/engine.py \
     /opt/ares/backend/src/ares/workflows/engine.py \
     /usr/lib/ares/ares-boot-ready \
@@ -117,6 +119,13 @@ for unit in \
     fi
 done
 
+if ! grep -qx 'SupplementaryGroups=ares-api' \
+    /usr/lib/systemd/system/ares-boot-ready.service; then
+    printf '%s\n' \
+        'The capability-free boot marker cannot read the protected hardware view.' >&2
+    exit 1
+fi
+
 for unit in \
     apt-daily.service \
     apt-daily.timer \
@@ -198,5 +207,15 @@ fi
 if find /etc/apt/sources.list.d -type f -print -quit | grep -q . || \
    grep -Eq '^[[:space:]]*deb([[:space:]]|$)' /etc/apt/sources.list; then
     printf '%s\n' 'A runtime network APT source remains enabled.' >&2
+    exit 1
+fi
+
+if [ -e /etc/nvme/hostid ]; then
+    printf '%s\n' 'A build-specific NVMe host identifier remains in the Live root.' >&2
+    exit 1
+fi
+if find /var/cache/apt -maxdepth 1 -type f -name '*cache.bin' -print -quit \
+    | grep -q .; then
+    printf '%s\n' 'A nondeterministic APT binary cache remains in the Live root.' >&2
     exit 1
 fi

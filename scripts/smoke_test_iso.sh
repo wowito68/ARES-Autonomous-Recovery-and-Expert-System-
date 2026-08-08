@@ -12,10 +12,18 @@ command -v qemu-system-x86_64 >/dev/null 2>&1 || { printf '%s\n' 'qemu-system-x8
 
 timeout_seconds=${ARES_QEMU_TIMEOUT:-300}
 profile=${ARES_QEMU_PROFILE:-all}
+accel=${ARES_QEMU_ACCEL:-tcg,thread=multi}
 case "${profile}" in
     all|bios-cd|bios-hybrid|uefi-secure-cd|uefi-secure-hybrid) ;;
     *)
         printf 'Unknown ARES_QEMU_PROFILE: %s\n' "${profile}" >&2
+        exit 2
+        ;;
+esac
+case "${accel}" in
+    kvm|tcg|tcg,thread=multi) ;;
+    *)
+        printf 'Unsupported ARES_QEMU_ACCEL: %s\n' "${accel}" >&2
         exit 2
         ;;
 esac
@@ -85,7 +93,7 @@ selected() {
     [ "${profile}" = all ] || [ "${profile}" = "$1" ]
 }
 
-common_args='-m 2048 -smp 4 -accel tcg,thread=multi -nic none -display none -serial stdio -no-reboot'
+common_args="-m 2048 -smp 4 -accel ${accel} -nic none -display none -serial stdio -no-reboot"
 if selected bios-cd; then
     # shellcheck disable=SC2086
     run_boot bios-cd UNAVAILABLE \
@@ -100,7 +108,7 @@ if selected bios-hybrid; then
     run_boot bios-hybrid UNAVAILABLE \
         -machine pc ${common_args} \
         -boot c \
-        -drive "file=${iso},format=raw,if=ide,media=disk,readonly=on"
+        -drive "file=${iso},format=raw,if=ide,media=disk,snapshot=on"
 fi
 
 case "${profile}" in
@@ -136,7 +144,7 @@ if selected uefi-secure-hybrid; then
         -drive "if=pflash,format=raw,readonly=on,file=${ovmf_code}" \
         -drive "if=pflash,format=raw,file=${temp_dir}/OVMF_VARS_HYBRID.fd" \
         -boot c \
-        -drive "file=${iso},format=raw,if=virtio,readonly=on"
+        -drive "file=${iso},format=raw,if=virtio,snapshot=on"
 fi
 
 if [ "${profile}" = all ]; then

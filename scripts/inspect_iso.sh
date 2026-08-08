@@ -54,6 +54,21 @@ for payload in filesystem.squashfs filesystem.squashfs.verity filesystem.squashf
 done
 root_hash=$(tr -d '[:space:]' < "${temp_dir}/filesystem.squashfs.roothash")
 printf '%s' "${root_hash}" | grep -Eq '^[0-9a-f]{64}$' || { printf '%s\n' 'Invalid dm-verity root hash.' >&2; exit 1; }
+expected_salt=$(sha256sum "${temp_dir}/filesystem.squashfs" | awk '{print $1}')
+actual_salt=$(veritysetup dump "${temp_dir}/filesystem.squashfs.verity" \
+    | awk -F: '$1 == "Salt" {gsub(/[[:space:]]/, "", $2); print $2}')
+[ "${actual_salt}" = "${expected_salt}" ] || {
+    printf '%s\n' 'The dm-verity salt is not reproducibly bound to SquashFS.' >&2
+    exit 1
+}
+expected_uuid=$(printf '%s\n' "${expected_salt}" \
+    | sed -E 's/^(.{8})(.{4})(.{4})(.{4})(.{12}).*/\1-\2-\3-\4-\5/')
+actual_uuid=$(veritysetup dump "${temp_dir}/filesystem.squashfs.verity" \
+    | awk -F: '$1 == "UUID" {gsub(/[[:space:]]/, "", $2); print $2}')
+[ "${actual_uuid}" = "${expected_uuid}" ] || {
+    printf '%s\n' 'The dm-verity UUID is not reproducibly bound to SquashFS.' >&2
+    exit 1
+}
 veritysetup verify \
     "${temp_dir}/filesystem.squashfs" \
     "${temp_dir}/filesystem.squashfs.verity" \
@@ -62,11 +77,13 @@ veritysetup verify \
 unsquashfs -ll "${temp_dir}/filesystem.squashfs" > "${temp_dir}/squashfs.list"
 for runtime_path in \
     opt/ares/backend/src/ares/main.py \
+    opt/ares/backend/src/ares/capabilities/discovery.py \
     opt/ares/backend/src/ares/capabilities/manager.py \
     opt/ares/backend/src/ares/capabilities/plugins/disk_analysis.py \
     opt/ares/backend/src/ares/workflows/engine.py \
     opt/ares/backend/src/ares/events/bus.py \
     opt/ares/backend/src/ares/knowledge/graph.py \
+    opt/ares/backend/src/ares/planner/engine.py \
     opt/ares/backend/src/ares/reasoning/engine.py \
     usr/lib/ares/ares-boot-integrity \
     usr/lib/ares/ares-hardware-boot \
@@ -83,6 +100,16 @@ grep -Eq 'squashfs-root/opt/ares/backend/src/ares/__pycache__/main\.cpython-[0-9
 grep -Eq 'squashfs-root/usr/lib/python3\.[0-9]+/concurrent/futures/__pycache__/thread\.cpython-[0-9]+\.pyc$' \
     "${temp_dir}/squashfs.list" \
     || { printf '%s\n' 'Precompiled Python standard-library bytecode is missing from SquashFS.' >&2; exit 1; }
+for forbidden_path in \
+    etc/nvme/hostid \
+    var/cache/apt/pkgcache.bin \
+    var/cache/apt/srcpkgcache.bin; do
+    if grep -Fq "squashfs-root/${forbidden_path}" "${temp_dir}/squashfs.list"; then
+        printf 'Nondeterministic build state remains in SquashFS: /%s\n' \
+            "${forbidden_path}" >&2
+        exit 1
+    fi
+done
 
 unsquashfs -cat "${temp_dir}/filesystem.squashfs" \
     usr/lib/systemd/system/ares-backend.service > "${temp_dir}/ares-backend.service"
@@ -108,6 +135,8 @@ unsquashfs -cat "${temp_dir}/filesystem.squashfs" \
     usr/share/ares/platform/app.js > "${temp_dir}/app.js"
 grep -Fq '/capabilities/storage.disk-analysis/executions' "${temp_dir}/app.js" \
     || { printf '%s\n' 'The ISO interface does not expose Disk Analysis.' >&2; exit 1; }
+grep -Fq '/planner/plan' "${temp_dir}/app.js" \
+    || { printf '%s\n' 'The ISO interface does not expose Capability planning.' >&2; exit 1; }
 if grep -Eq '(^|[,{[:space:]])command[[:space:]]*:' "${temp_dir}/app.js"; then
     printf '%s\n' 'The ISO interface sends forbidden command input to a capability.' >&2
     exit 1
@@ -121,9 +150,26 @@ unsquashfs -cat "${temp_dir}/filesystem.squashfs" \
     usr/lib/ares/ares-boot-integrity > "${temp_dir}/ares-boot-integrity"
 grep -qx '#!/bin/sh' "${temp_dir}/ares-boot-integrity" \
     || { printf '%s\n' 'Boot integrity still depends on Python in the critical path.' >&2; exit 1; }
-grep -Fq 'timeout 3 "${dmsetup_binary}" ls --target verity' \
+grep -Fq '/run/live/rootfs/filesystem.squashfs' \
     "${temp_dir}/ares-boot-integrity" \
-    || { printf '%s\n' 'The ISO boot-integrity dmsetup call is unbounded.' >&2; exit 1; }
+    || { printf '%s\n' 'The ISO does not verify the effective Live root mount.' >&2; exit 1; }
+grep -Fq 'CRYPT-VERITY-' "${temp_dir}/ares-boot-integrity" \
+    || { printf '%s\n' 'The ISO does not verify the kernel dm-verity identity.' >&2; exit 1; }
+if grep -Eq '(^|[ /])dmsetup([[:space:]]|$)' "${temp_dir}/ares-boot-integrity"; then
+    printf '%s\n' 'The ISO boot-integrity service opens device-mapper control.' >&2
+    exit 1
+fi
+grep -qx 'PrivateDevices=yes' "${temp_dir}/ares-boot-integrity.service" \
+    || { printf '%s\n' 'The ISO boot-integrity service can access device nodes.' >&2; exit 1; }
+unsquashfs -cat "${temp_dir}/filesystem.squashfs" \
+    usr/lib/systemd/system/ares-boot-ready.service \
+    > "${temp_dir}/ares-boot-ready.service"
+grep -qx 'SupplementaryGroups=ares-api' "${temp_dir}/ares-boot-ready.service" \
+    || {
+        printf '%s\n' \
+            'The ISO boot marker cannot traverse the protected public hardware inventory.' >&2
+        exit 1
+    }
 unsquashfs -cat "${temp_dir}/filesystem.squashfs" \
     usr/lib/systemd/system/ares-hardware.service > "${temp_dir}/ares-hardware.service"
 grep -qx 'TimeoutStartSec=30s' "${temp_dir}/ares-hardware.service" \

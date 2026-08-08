@@ -91,7 +91,15 @@ make test-iso
 make verify-reproducible
 ```
 
-`make validate` no usa red. `make validate-config` ejecuta la versión fijada de `live-build`. `make verify-reproducible` construye dos veces desde workspaces limpios y solo pasa si ambos ISO son idénticos byte a byte.
+`make validate` no usa red. `make validate-config` ejecuta la versión fijada de
+`live-build`. `make verify-reproducible` construye dos veces desde workspaces
+limpios y solo pasa si ambos ISO son idénticos byte a byte; reutiliza la caché
+APT autenticada por defecto y admite
+`ARES_REPRODUCIBLE_COLD_CACHE=1` para la puerta de release sin caché.
+`make test-iso` cubre BIOS y UEFI Secure Boot desde CD e imagen híbrida USB y
+exige readiness real de API, UI e inventario de hardware dentro del guest. En
+hosts con KVM puede ejecutarse como `ARES_QEMU_ACCEL=kvm make test-iso`; el
+valor predeterminado continúa siendo TCG.
 
 ### 3.2 Entradas congeladas
 
@@ -114,6 +122,17 @@ Hay tres niveles distintos:
 3. **Release autenticado**: el artefacto reproducible tiene manifest, SBOM, firmas y procedencia verificables.
 
 La configuración apunta al segundo nivel, pero ningún release se etiquetará “reproducible” hasta ejecutar la comparación doble. Las firmas externas se aplican después porque pueden incorporar tiempo.
+Antes de crear SquashFS se eliminan y excluyen identificadores de host NVMe
+generados durante la instalación y caches binarios de APT. La exclusión se
+aplica en `binary_rootfs`, después de las reconfiguraciones internas de APT de
+`live-build`, y el inspector rechaza la ISO si alguno reaparece. No forman
+parte de la identidad del equipo real ni son necesarios en una sesión offline.
+La sal de dm-verity es el digest SHA-256 del SquashFS inmutable y su UUID se
+deriva de los primeros 128 bits del mismo digest: ambos siguen siendo
+una sal de 256 bits ligada al contenido y elimina la aleatoriedad predeterminada
+de `veritysetup format`. Tanto el árbol verity como el root hash pasan así a
+ser reproducibles; el inspector verifica la derivación y después valida el
+árbol completo con `veritysetup verify`.
 
 ## 4. Estructura del repositorio Live
 
@@ -310,10 +329,11 @@ flowchart TD
 No se usa `systemd-udev-settle`; OS3 añadirá hot-plug incremental.
 
 La medición de integridad también permanece fuera de Python: un colector POSIX
-lee el estado de firmware y Secure Boot y ejecuta `dmsetup` con timeout de tres
-segundos. La unidad completa dispone de un techo de 15 segundos. Esto evita que
-la inicialización del intérprete bloquee indefinidamente `ares-preflight.target`
-en CPUs lentas.
+lee el estado de firmware y Secure Boot y correlaciona de forma pasiva el mount
+SquashFS efectivo de `/proc/mounts` con la identidad `CRYPT-VERITY-*` publicada
+por sysfs. No abre `/dev/mapper/control`; la unidad completa dispone de un techo
+de 15 segundos. Esto evita que una consulta bloqueante al device mapper o la
+inicialización del intérprete detengan `ares-preflight.target` en CPUs lentas.
 
 La biblioteca estándar de Python, el backend y sus dependencias se precompilan
 con bytecode de hash verificado después de la limpieza genérica de
@@ -329,6 +349,11 @@ Ambas unidades conservan `CAP_DAC_OVERRIDE` porque la raíz del servicio debe
 publicar en directorios propiedad de `ares-hardware`; `ProtectSystem=strict`,
 `ProtectHome=yes` y `ReadWritePaths=/run/ares/hardware` limitan esa capacidad
 al runtime volátil del inventario.
+El marcador de readiness no recibe capabilities. Se incorpora únicamente al
+grupo suplementario `ares-api`, con acceso de lectura al inventario público
+redactado, para comprobar hardware sin poder abrir la vista privada ni
+dispositivos. Esta pertenencia explícita evita que UID 0 sin
+`CAP_DAC_OVERRIDE` confunda un inventario protegido con uno inexistente.
 El lanzador gráfico espera hasta 120 segundos al endpoint local; la interfaz
 funcional siempre se abre desde `http://127.0.0.1:8000/`, de modo que assets y
 API comparten origen. Solo ante un fallo sostenido se muestra el dashboard
@@ -453,7 +478,7 @@ solo con un pack redistribuible aprobado. CPU será garantizado; GPU opcional.
 - preflight/inventario paralelos por systemd;
 - cuatro workers de probes con timeout;
 - LLM no bloquea API/UI;
-- sin índices APT, compiladores ni caches npm/pip en ISO;
+- sin índices ni caches binarios APT, compiladores ni caches npm/pip en ISO;
 - Xfce explícito, no `task-xfce-desktop`;
 - XZ nivel 6 prioriza tamaño; Zstd se decidirá con mediciones;
 - modelo después de UI, con límites de memoria/OOM;

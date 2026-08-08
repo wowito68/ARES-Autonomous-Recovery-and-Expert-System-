@@ -16,5 +16,6 @@ ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
 PrivateTmp=yes
+PrivateDevices=yes
 ReadWritePaths=/run/ares
 RestrictAddressFamilies=AF_UNIX

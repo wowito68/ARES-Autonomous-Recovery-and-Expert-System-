@@ -4,6 +4,8 @@ const API_ROOT = "/api/v1";
 const history = [];
 let chatBusy = false;
 let capabilityBusy = false;
+let plannerBusy = false;
+let hardwareEvidenceReady = false;
 
 const elements = {
   apiBadge: document.querySelector("#api-badge"),
@@ -25,6 +27,11 @@ const elements = {
   modelName: document.querySelector("#model-name"),
   networkDetail: document.querySelector("#network-detail"),
   networkValue: document.querySelector("#network-value"),
+  plannerBadge: document.querySelector("#planner-badge"),
+  plannerButton: document.querySelector("#planner-button"),
+  plannerForm: document.querySelector("#planner-form"),
+  plannerGoal: document.querySelector("#planner-goal"),
+  plannerResults: document.querySelector("#planner-results"),
   refreshButton: document.querySelector("#refresh-button"),
   retentionDetail: document.querySelector("#retention-detail"),
   retentionValue: document.querySelector("#retention-value"),
@@ -103,6 +110,9 @@ function updateSession(data) {
     "Estado registrado durante el arranque",
   );
   elements.lastUpdate.textContent = `Actualizado ${new Date().toLocaleTimeString("es-MX")}`;
+  hardwareEvidenceReady = Array.isArray(
+    data.hardware?.probes?.storage?.data?.blockdevices,
+  );
   renderHardware(data.hardware);
 }
 
@@ -284,6 +294,60 @@ function renderDiskAnalysis(execution) {
   }
 }
 
+function renderPlan(plan) {
+  elements.plannerResults.replaceChildren();
+  const summary = document.createElement("div");
+  const title = document.createElement("strong");
+  const detail = document.createElement("p");
+  summary.className = `planner-summary ${plan.status || "stopped"}`;
+
+  if (plan.status === "needs_evidence") {
+    title.textContent = "Falta evidencia";
+    const evidence = Array.isArray(plan.requested_evidence)
+      ? plan.requested_evidence.join(", ")
+      : "evidencia no especificada";
+    detail.textContent = `El plan no se puede completar todavía: ${evidence}.`;
+    summary.append(title, detail);
+    elements.plannerResults.append(summary);
+    return;
+  }
+
+  if (plan.status !== "ready") {
+    title.textContent = "Plan detenido";
+    detail.textContent = valueOrFallback(
+      plan.stop_reason,
+      "Ninguna Capability instalada coincide con el objetivo.",
+    );
+    summary.append(title, detail);
+    elements.plannerResults.append(summary);
+    return;
+  }
+
+  title.textContent = "Plan listo para revisión";
+  detail.textContent = `Plan ${valueOrFallback(plan.id).slice(0, 12)} · No ejecutado`;
+  summary.append(title, detail);
+  elements.plannerResults.append(summary);
+
+  const steps = document.createElement("ol");
+  steps.className = "planner-steps";
+  for (const step of plan.steps || []) {
+    const item = document.createElement("li");
+    const heading = document.createElement("strong");
+    const metadata = document.createElement("span");
+    const rationale = document.createElement("p");
+    heading.textContent = `${valueOrFallback(step.capability_id)} @ ${valueOrFallback(
+      step.version,
+    )}`;
+    metadata.textContent = `${valueOrFallback(
+      step.operation_class,
+    ).toUpperCase()} · RIESGO ${valueOrFallback(step.risk_level).toUpperCase()}`;
+    rationale.textContent = valueOrFallback(step.rationale);
+    item.append(heading, metadata, rationale);
+    steps.append(item);
+  }
+  elements.plannerResults.append(steps);
+}
+
 async function refreshCapabilities() {
   try {
     const catalog = await requestJson("/capabilities?category=storage", {
@@ -295,13 +359,53 @@ async function refreshCapabilities() {
     if (installed) {
       setBadge(elements.capabilityBadge, "ready", "Disk Analysis instalada");
       elements.diskAnalysisButton.disabled = capabilityBusy;
+      setBadge(elements.plannerBadge, "ready", "Planner disponible");
+      elements.plannerButton.disabled = plannerBusy;
       return;
     }
     setBadge(elements.capabilityBadge, "warning", "Capability no instalada");
     elements.diskAnalysisButton.disabled = true;
+    setBadge(elements.plannerBadge, "warning", "Sin Capabilities");
+    elements.plannerButton.disabled = true;
   } catch {
     setBadge(elements.capabilityBadge, "error", "Catálogo no disponible");
     elements.diskAnalysisButton.disabled = true;
+    setBadge(elements.plannerBadge, "error", "Planner no disponible");
+    elements.plannerButton.disabled = true;
+  }
+}
+
+async function buildPlan(event) {
+  event.preventDefault();
+  const goal = elements.plannerGoal.value.trim();
+  if (!goal || plannerBusy || elements.plannerButton.disabled) {
+    return;
+  }
+
+  plannerBusy = true;
+  elements.plannerButton.disabled = true;
+  elements.plannerButton.textContent = "Planificando…";
+  setBadge(elements.plannerBadge, "pending", "Evaluando objetivo");
+  const evidence = hardwareEvidenceReady
+    ? [{ id: "hardware.block-devices", confidence: 1 }]
+    : [];
+  try {
+    const plan = await requestJson("/planner/plan", {
+      method: "POST",
+      body: JSON.stringify({ goal, evidence }),
+      timeout: 5000,
+    });
+    renderPlan(plan);
+    const state = plan.status === "ready" ? "ready" : "warning";
+    const label = plan.status === "ready" ? "Plan listo" : "Plan no ejecutable";
+    setBadge(elements.plannerBadge, state, label);
+  } catch {
+    setBadge(elements.plannerBadge, "error", "Planner no disponible");
+    showBanner("El Planner local no pudo evaluar el objetivo.", true);
+  } finally {
+    plannerBusy = false;
+    elements.plannerButton.textContent = "Generar plan";
+    await refreshCapabilities();
   }
 }
 
@@ -412,6 +516,7 @@ async function sendChat(event) {
 
 elements.refreshButton.addEventListener("click", refreshSystem);
 elements.chatForm.addEventListener("submit", sendChat);
+elements.plannerForm.addEventListener("submit", buildPlan);
 elements.diskAnalysisButton.addEventListener("click", runDiskAnalysis);
 window.addEventListener("DOMContentLoaded", refreshSystem);
 window.setInterval(refreshSystem, 30000);

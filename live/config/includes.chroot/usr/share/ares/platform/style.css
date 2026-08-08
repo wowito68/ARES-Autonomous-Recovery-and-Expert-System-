@@ -508,6 +508,162 @@ textarea:focus {
   margin: 8px 0 0;
 }
 
+.planner-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.8fr) minmax(360px, 1.4fr);
+  gap: 18px;
+}
+
+.planner-form,
+.planner-results {
+  min-height: 230px;
+  padding: 20px;
+  border: 1px solid #17384a;
+  border-radius: 13px;
+  background: #071722;
+}
+
+.planner-form {
+  display: flex;
+  flex-direction: column;
+}
+
+.planner-form label {
+  margin-bottom: 8px;
+  color: #a7c2d2;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.planner-form textarea {
+  width: 100%;
+  min-height: 104px;
+  padding: 13px;
+  color: #e5f6fc;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  resize: vertical;
+  border: 1px solid #1f465a;
+  border-radius: 9px;
+  outline: none;
+  background: #06131d;
+}
+
+.planner-form button {
+  align-self: flex-start;
+  min-height: 42px;
+  margin-top: 12px;
+  padding: 0 17px;
+  color: #001218;
+  font-size: 12px;
+  font-weight: 800;
+  border: 0;
+  border-radius: 9px;
+  background: #5ee1f2;
+}
+
+.planner-results {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.planner-summary {
+  padding: 12px 14px;
+  border: 1px solid #24536a;
+  border-radius: 9px;
+  background: #0a1d29;
+}
+
+.planner-summary.needs_evidence {
+  border-color: #5a421e;
+  background: #201807;
+}
+
+.planner-summary.stopped {
+  border-color: #63333d;
+  background: #241015;
+}
+
+.planner-summary strong,
+.planner-summary p {
+  display: block;
+  margin: 0;
+}
+
+.planner-summary strong {
+  color: #dff7fd;
+  font-size: 13px;
+}
+
+.planner-summary p {
+  margin-top: 5px;
+  color: #91adbd;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.planner-steps {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: planner-step;
+}
+
+.planner-steps li {
+  position: relative;
+  padding: 12px 12px 12px 44px;
+  border: 1px solid #17384a;
+  border-radius: 9px;
+  background: #091b27;
+  counter-increment: planner-step;
+}
+
+.planner-steps li::before {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  color: #03151c;
+  font-size: 10px;
+  font-weight: 900;
+  content: counter(planner-step);
+  border-radius: 50%;
+  background: #5ee1f2;
+}
+
+.planner-steps strong,
+.planner-steps span,
+.planner-steps p {
+  display: block;
+}
+
+.planner-steps strong {
+  color: #e5f6fc;
+  font-size: 12px;
+}
+
+.planner-steps span {
+  margin-top: 4px;
+  color: #65e6a2;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.planner-steps p {
+  margin: 5px 0 0;
+  color: #8fa9b9;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .capability-layout {
   display: grid;
   grid-template-columns: minmax(260px, 0.8fr) minmax(360px, 1.4fr);
@@ -721,6 +877,7 @@ footer {
 
   .metric-grid,
   .assistant-layout,
+  .planner-layout,
   .capability-layout {
     grid-template-columns: 1fr;
   }

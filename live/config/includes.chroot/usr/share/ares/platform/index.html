@@ -22,6 +22,7 @@
         <nav>
           <a class="nav-link active" href="#resumen">Resumen</a>
           <a class="nav-link" href="#asistente">Asistente local</a>
+          <a class="nav-link" href="#planner">Planner</a>
           <a class="nav-link" href="#capabilities">Capabilities</a>
           <a class="nav-link" href="#hardware">Hardware</a>
         </nav>
@@ -142,6 +143,47 @@
                   Esperando al runtime de IA local.
                 </p>
               </form>
+            </div>
+          </div>
+        </section>
+
+        <section id="planner" class="section-block" aria-labelledby="planner-title">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">RAZONAMIENTO · SIN EJECUCIÓN</p>
+              <h2 id="planner-title">Planner de Capabilities</h2>
+            </div>
+            <span id="planner-badge" class="status-badge pending">
+              Comprobando Planner
+            </span>
+          </div>
+
+          <div class="planner-layout">
+            <form id="planner-form" class="planner-form">
+              <label for="planner-goal">Objetivo técnico</label>
+              <textarea
+                id="planner-goal"
+                name="goal"
+                rows="4"
+                minlength="3"
+                maxlength="1000"
+                placeholder="Ejemplo: analizar la capacidad y estructura de los discos"
+                required
+              ></textarea>
+              <button id="planner-button" type="submit" disabled>
+                Generar plan
+              </button>
+              <p class="form-hint">
+                El Planner selecciona Capabilities y dependencias; nunca crea comandos
+                ni inicia acciones por sí mismo.
+              </p>
+            </form>
+
+            <div id="planner-results" class="planner-results" aria-live="polite">
+              <p class="empty-state">
+                Describe un objetivo para obtener un plan inmutable con riesgo,
+                versión, dependencias y evidencia requerida.
+              </p>
             </div>
           </div>
         </section>

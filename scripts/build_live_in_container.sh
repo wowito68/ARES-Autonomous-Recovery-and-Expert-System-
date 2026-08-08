@@ -161,6 +161,12 @@ fi
 /workspace/scripts/render_release_metadata.sh /build
 
 cd /build
+mkdir -p local/bin
+install -m 0755 /workspace/scripts/veritysetup_reproducible.sh \
+    local/bin/veritysetup
+PATH="/build/local/bin:${PATH}"
+export PATH
+
 config_log=/tmp/ares-lb-config.log
 if ! lb config >"${config_log}" 2>&1; then
     cat "${config_log}" >&2

@@ -89,8 +89,7 @@ class Settings(BaseSettings):
         if len(set(self.capability_plugin_allowlist)) != len(self.capability_plugin_allowlist):
             raise ValueError("capability_plugin_allowlist contains duplicates")
         if any(
-            _ENTRY_POINT_NAME.fullmatch(name) is None
-            for name in self.capability_plugin_allowlist
+            _ENTRY_POINT_NAME.fullmatch(name) is None for name in self.capability_plugin_allowlist
         ):
             raise ValueError("capability_plugin_allowlist contains an invalid entry-point name")
         return self

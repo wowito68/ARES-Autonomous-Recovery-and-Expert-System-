@@ -62,7 +62,45 @@ make test-iso
 make verify-reproducible
 ```
 
-`make test-iso` comprueba que QEMU puede iniciar BIOS y UEFI; no sustituye los asserts dentro del guest ni la prueba Secure Boot con OVMF_VARS que contenga claves inscritas.
+`make test-iso` arranca cuatro perfiles: BIOS y UEFI Secure Boot, cada uno
+desde medio óptico y desde la imagen híbrida tratada como disco USB. La prueba
+solo pasa cuando el guest publica
+`ARES_BOOT_READY ... api=READY ui=READY hardware=READY`; en UEFI utiliza
+OVMF con claves Microsoft inscritas y exige `trust=ENFORCED_PARTIAL`. TCG es el
+acelerador predeterminado y reproducible. En un host con acceso a `/dev/kvm`
+puede reducirse el tiempo sin cambiar la cobertura:
+
+```bash
+ARES_QEMU_ACCEL=kvm make test-iso
+```
+
+Los discos híbridos se abren mediante snapshots efímeros de QEMU, por lo que
+las escrituras del firmware o del guest nunca modifican `iso/ARES.iso`.
+
+`make verify-reproducible` siempre usa dos workspaces nuevos y compara las ISO
+byte por byte. Por defecto reutiliza la caché local cuyos paquetes siguen
+siendo autenticados por APT; esto evita descargar dos veces el mismo snapshot.
+El saneamiento y la lista de exclusión final de SquashFS eliminan del root Live
+el `hostid` aleatorio creado por `nvme-cli` y los caches binarios de APT. La
+exclusión sigue aplicándose aunque `live-build` regenere APT después de los
+hooks; esos datos de build no sirven en la operación offline ni tienen una
+representación byte a byte estable.
+La sal y el UUID de dm-verity se derivan del SHA-256 del SquashFS terminado. Así conservan
+32 bytes de sal vinculados al contenido, pero evita la sal aleatoria que
+`veritysetup format` generaría en cada build. El inspector comprueba ambos
+relación antes de aceptar la ISO.
+La puerta de release puede además exigir dos descargas en frío:
+
+```bash
+ARES_REPRODUCIBLE_COLD_CACHE=1 make verify-reproducible
+```
+
+Para diagnosticar una diferencia, puede conservarse de forma explícita el
+par fallido; en ejecuciones normales se elimina para no consumir espacio:
+
+```bash
+ARES_KEEP_REPRO_EVIDENCE=1 make verify-reproducible
+```
 
 ## Escritura a USB
 

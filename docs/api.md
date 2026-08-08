@@ -27,9 +27,11 @@ GET             /machines/{id}/snapshots
 
 GET             /capabilities
 GET             /capabilities/{capability_id}
+GET             /capabilities/{capability_id}/versions
 POST            /capabilities/{capability_id}/executions
 GET             /capabilities/executions/{execution_id}
 POST            /reasoning/assess
+POST            /planner/plan
 GET             /knowledge/graph
 
 GET/POST        /cases
@@ -98,9 +100,11 @@ stack traces, secretos ni stdout.
 | `POST /api/v1/assistant/chat` | Conversación local acotada; sin tools, ejecución ni privilegios |
 | `GET /api/v1/capabilities` | Busca metadata pública en el registro sellado |
 | `GET /api/v1/capabilities/{id}` | Describe una Capability sin revelar Actions privadas |
+| `GET /api/v1/capabilities/{id}/versions` | Enumera versiones instaladas y señala la versión activa |
 | `POST /api/v1/capabilities/{id}/executions` | Ejecuta un workflow server-owned con input semántico |
 | `GET /api/v1/capabilities/executions/{id}` | Lee el registro público de una ejecución del arranque |
 | `POST /api/v1/reasoning/assess` | Genera hipótesis, pide evidencia o selecciona una Capability |
+| `POST /api/v1/planner/plan` | Construye un plan inmutable de Capabilities sin ejecutarlo |
 | `GET /api/v1/knowledge/graph` | Devuelve el snapshot versionado del equipo |
 
 Salud incluye estado y versión. El endpoint de chat acepta como máximo 12
@@ -123,5 +127,12 @@ Actions no forman parte de la respuesta HTTP. Un fallo de la capability queda
 registrado con estado `failed` y un `error_code` estable dentro de una respuesta HTTP
 exitosa.
 
+El Planner acepta un objetivo y referencias tipadas de evidencia. Su respuesta
+contiene únicamente IDs y versiones de Capabilities, dependencias, riesgo,
+clase de operación y justificación. No contiene Actions, Tools, rutas,
+argumentos del sistema operativo ni una orden implícita de ejecución.
+
 El diseño y la secuencia se describen en
-[ARES v2: arquitectura basada en Capabilities](architecture-v2-capabilities.md).
+[ARES v2: arquitectura basada en Capabilities](architecture-v2-capabilities.md)
+y el cierre de versionado, descubrimiento y Planner en
+[extensibilidad ARES v2](architecture-v2-extensibility.md).

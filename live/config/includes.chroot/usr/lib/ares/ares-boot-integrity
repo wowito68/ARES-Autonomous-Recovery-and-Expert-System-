@@ -5,7 +5,8 @@ set -eu
 # interpreter so it remains bounded on slow recovery hardware and under TCG.
 runtime_root=${ARES_RUNTIME_ROOT:-/run/ares}
 efi_root=${ARES_EFI_ROOT:-/sys/firmware/efi}
-dmsetup_binary=${ARES_DMSETUP:-/usr/sbin/dmsetup}
+proc_mounts=${ARES_PROC_MOUNTS:-/proc/mounts}
+sys_block_root=${ARES_SYS_BLOCK_ROOT:-/sys/block}
 output=${runtime_root}/integrity.json
 temporary=${output}.tmp.$$
 trap 'rm -f -- "${temporary}"' EXIT HUP INT TERM
@@ -29,14 +30,43 @@ if [ -d "${efi_root}" ]; then
 fi
 
 verity=inactive
-if verity_devices=$(timeout 3 "${dmsetup_binary}" ls --target verity 2>/dev/null); then
-    case "${verity_devices}" in
-        ''|*"No devices found"*) verity=inactive ;;
-        *) verity=active ;;
-    esac
-else
-    verity=unknown
-fi
+verity_source=
+verity_type=
+verity_options=
+while IFS=' ' read -r source target filesystem options remainder; do
+    : "${remainder:=}"
+    if [ "${target}" = /run/live/rootfs/filesystem.squashfs ]; then
+        verity_source=${source}
+        verity_type=${filesystem}
+        verity_options=${options}
+        break
+    fi
+done < "${proc_mounts}"
+
+case "${verity_source}" in
+    /dev/mapper/*-verity)
+        mapper_name=${verity_source#/dev/mapper/}
+        verity=unknown
+        for dm_directory in "${sys_block_root}"/dm-*; do
+            [ -r "${dm_directory}/dm/name" ] || continue
+            IFS= read -r candidate_name < "${dm_directory}/dm/name" || continue
+            [ "${candidate_name}" = "${mapper_name}" ] || continue
+            IFS= read -r candidate_uuid < "${dm_directory}/dm/uuid" || continue
+            case "${candidate_uuid}" in
+                CRYPT-VERITY-*)
+                    case ",${verity_options}," in
+                        *,ro,*)
+                            if [ "${verity_type}" = squashfs ]; then
+                                verity=active
+                            fi
+                            ;;
+                    esac
+                    ;;
+            esac
+            break
+        done
+        ;;
+esac
 
 integrity_failed=false
 if [ "${verity}" != active ]; then
@@ -59,7 +89,6 @@ printf '%s\n' \
     "{\"schema_version\":1,\"firmware\":\"${firmware}\",\"secure_boot\":\"${secure_boot}\",\"dm_verity\":\"${verity}\",\"trust\":\"${trust}\",\"full_chain\":false}" \
     > "${temporary}"
 chmod 0644 "${temporary}"
-sync -f "${temporary}"
 mv -f -- "${temporary}" "${output}"
 trap - EXIT HUP INT TERM
 

@@ -81,9 +81,7 @@ async def test_catalog_generates_input_docs_versions_and_command_free_plan(
         transport = ASGITransport(app=application, raise_app_exceptions=False)
         async with AsyncClient(transport=transport, base_url="http://testserver") as client:
             detail = await client.get("/api/v1/capabilities/storage.disk-analysis")
-            versions = await client.get(
-                "/api/v1/capabilities/storage.disk-analysis/versions"
-            )
+            versions = await client.get("/api/v1/capabilities/storage.disk-analysis/versions")
             needs_evidence = await client.post(
                 "/api/v1/planner/plan",
                 json={"goal": "analizar capacidad del disco"},
@@ -92,9 +90,7 @@ async def test_catalog_generates_input_docs_versions_and_command_free_plan(
                 "/api/v1/planner/plan",
                 json={
                     "goal": "analizar capacidad del disco",
-                    "evidence": [
-                        {"id": "hardware.block-devices", "confidence": 0.95}
-                    ],
+                    "evidence": [{"id": "hardware.block-devices", "confidence": 0.95}],
                 },
             )
 
@@ -109,9 +105,7 @@ async def test_catalog_generates_input_docs_versions_and_command_free_plan(
     assert needs_evidence.json()["status"] == "needs_evidence"
     plan = ready.json()
     assert plan["status"] == "ready"
-    assert [step["capability_id"] for step in plan["steps"]] == [
-        "storage.disk-analysis"
-    ]
+    assert [step["capability_id"] for step in plan["steps"]] == ["storage.disk-analysis"]
     serialized = json.dumps(plan).casefold()
     assert "action" not in serialized
     assert "command" not in serialized

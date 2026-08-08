@@ -104,8 +104,7 @@ class CapabilityManager:
         """Search active metadata, never private action implementations."""
 
         return tuple(
-            descriptor.metadata
-            for descriptor in self.descriptors(query=query, category=category)
+            descriptor.metadata for descriptor in self.descriptors(query=query, category=category)
         )
 
     def descriptors(
@@ -275,9 +274,7 @@ class CapabilityManager:
     ) -> None:
         if definition.capability_id != metadata.id:
             raise ValueError("workflow capability id does not match its registration")
-        actual_actions = {
-            step.action.id for stage in definition.stages for step in stage.steps
-        }
+        actual_actions = {step.action.id for stage in definition.stages for step in stage.steps}
         if actual_actions != set(metadata.internal_actions):
             raise ValueError("workflow actions do not match capability metadata")
 

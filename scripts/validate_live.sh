@@ -11,13 +11,20 @@ fail() {
 
 for required in \
     Makefile \
+    scripts/smoke_test_iso.sh \
+    scripts/test_boot_integrity.sh \
+    scripts/test_reproducible_verity.sh \
+    scripts/veritysetup_reproducible.sh \
+    scripts/verify_reproducible.sh \
     live/release.env \
     live/Dockerfile.build \
     live/auto/config \
+    live/config/rootfs/excludes \
     live/config/bootloaders/grub-pc/grub.cfg \
     live/config/bootloaders/syslinux_common/live.cfg.in \
     live/config/hooks/live/0400-ares-static-live-config.hook.chroot \
     live/config/hooks/live/0800-ares-python-cache.hook.chroot \
+    live/config/hooks/live/0900-ares-cleanup.hook.chroot \
     live/config/hooks/live/0950-ares-update-markers.hook.chroot \
     live/config/hooks/live/0990-ares-final-policy-check.hook.chroot \
     live/config/includes.chroot/etc/initramfs-tools/hooks/ares-verity \
@@ -36,13 +43,16 @@ for required in \
 done
 
 for required in \
+    backend/src/ares/capabilities/discovery.py \
     backend/src/ares/capabilities/manager.py \
     backend/src/ares/capabilities/plugins/disk_analysis.py \
     backend/src/ares/events/bus.py \
     backend/src/ares/knowledge/graph.py \
+    backend/src/ares/planner/engine.py \
     backend/src/ares/reasoning/engine.py \
     backend/src/ares/workflows/engine.py \
     docs/architecture-v2-capabilities.md \
+    docs/architecture-v2-extensibility.md \
     docs/diagrams/ares-v2-capability-flow.mmd \
     docs/diagrams/ares-v2-disk-analysis.mmd; do
     [ -f "${repo_root}/${required}" ] || fail "missing ARES v2 input ${required}"
@@ -151,6 +161,9 @@ grep -Fq 'd /var/lib/ares/capabilities 0700 ares-api ares-api -' \
 grep -Fq '/capabilities/storage.disk-analysis/executions' \
     "${repo_root}/live/config/includes.chroot/usr/share/ares/platform/app.js" \
     || fail 'the local interface must expose the Disk Analysis capability'
+grep -Fq '/planner/plan' \
+    "${repo_root}/live/config/includes.chroot/usr/share/ares/platform/app.js" \
+    || fail 'the local interface must expose command-free Capability planning'
 if grep -Fq '"command"' \
     "${repo_root}/live/config/includes.chroot/usr/share/ares/platform/app.js"; then
     fail 'the local interface must not send command fields to a capability'
@@ -161,6 +174,9 @@ grep -q 'copy_exec.*libcryptsetup' \
 grep -Fq 'api=%s ui=%s hardware=%s' \
     "${repo_root}/live/config/includes.chroot/usr/lib/ares/ares-boot-ready" \
     || fail 'the boot marker must prove backend, interface, and hardware readiness'
+grep -qx 'SupplementaryGroups=ares-api' \
+    "${repo_root}/live/config/includes.chroot/usr/lib/systemd/system/ares-boot-ready.service" \
+    || fail 'the capability-free boot marker must be able to traverse the ares-api hardware view'
 grep -q -- '--invalidation-mode checked-hash' \
     "${repo_root}/live/config/hooks/live/0800-ares-python-cache.hook.chroot" \
     || fail 'the backend must have reproducible precompiled bytecode'
@@ -176,15 +192,69 @@ grep -q '^TimeoutStartSec=15s$' \
 grep -q '^#!/bin/sh$' \
     "${repo_root}/live/config/includes.chroot/usr/lib/ares/ares-boot-integrity" \
     || fail 'boot integrity must not wait for a Python interpreter on the critical path'
-grep -Fq 'timeout 3 "${dmsetup_binary}" ls --target verity' \
+grep -Fq '/run/live/rootfs/filesystem.squashfs' \
     "${repo_root}/live/config/includes.chroot/usr/lib/ares/ares-boot-integrity" \
-    || fail 'the dm-verity observation must have a bounded command timeout'
+    || fail 'boot integrity must verify the effective Live root mount'
+grep -Fq 'CRYPT-VERITY-' \
+    "${repo_root}/live/config/includes.chroot/usr/lib/ares/ares-boot-integrity" \
+    || fail 'boot integrity must verify the kernel dm-verity identity'
+if grep -Eq '(^|[ /])dmsetup([[:space:]]|$)' \
+    "${repo_root}/live/config/includes.chroot/usr/lib/ares/ares-boot-integrity"; then
+    fail 'boot integrity must not open the device-mapper control path'
+fi
+grep -qx 'PrivateDevices=yes' \
+    "${repo_root}/live/config/includes.chroot/usr/lib/systemd/system/ares-boot-integrity.service" \
+    || fail 'boot integrity must not access device nodes'
 grep -Fq 'Another ARES ISO build is already running' \
     "${repo_root}/scripts/build_iso.sh" \
     || fail 'ISO builds must be serialized to prevent concurrent resource exhaustion'
 grep -Fq 'MKSQUASHFS_OPTIONS=-processors ${squashfs_processors} -mem ${squashfs_memory}' \
     "${repo_root}/scripts/build_iso.sh" \
     || fail 'SquashFS compression must have explicit CPU and memory limits'
+grep -Fq 'PATH="/build/local/bin:${PATH}"' \
+    "${repo_root}/scripts/build_live_in_container.sh" \
+    || fail 'the deterministic veritysetup wrapper must precede the builder tool'
+grep -Fq 'salt=$(sha256sum "${data_device}"' \
+    "${repo_root}/scripts/veritysetup_reproducible.sh" \
+    || fail 'dm-verity salt must be derived from the immutable rootfs digest'
+grep -Fq -- '--uuid "${uuid}"' \
+    "${repo_root}/scripts/veritysetup_reproducible.sh" \
+    || fail 'dm-verity UUID must be derived from the immutable rootfs digest'
+grep -Fq 'actual_salt=$(veritysetup dump' \
+    "${repo_root}/scripts/inspect_iso.sh" \
+    || fail 'the ISO inspector must verify the deterministic dm-verity salt'
+grep -Fq 'actual_uuid=$(veritysetup dump' \
+    "${repo_root}/scripts/inspect_iso.sh" \
+    || fail 'the ISO inspector must verify the deterministic dm-verity UUID'
+grep -Fq 'accel=${ARES_QEMU_ACCEL:-tcg,thread=multi}' \
+    "${repo_root}/scripts/smoke_test_iso.sh" \
+    || fail 'the guest smoke test must default to reproducible TCG acceleration'
+[ "$(grep -Fc 'snapshot=on' "${repo_root}/scripts/smoke_test_iso.sh")" -eq 2 ] \
+    || fail 'both hybrid USB smoke tests must protect the ISO with ephemeral snapshots'
+grep -Fq 'ARES_REPRODUCIBLE_COLD_CACHE' \
+    "${repo_root}/scripts/verify_reproducible.sh" \
+    || fail 'the reproducibility gate must retain an explicit cold-cache release mode'
+grep -Fq 'ARES_KEEP_REPRO_EVIDENCE' \
+    "${repo_root}/scripts/verify_reproducible.sh" \
+    || fail 'the reproducibility gate must support retained failure evidence'
+grep -Fq '/etc/nvme/hostid' \
+    "${repo_root}/live/config/hooks/live/0900-ares-cleanup.hook.chroot" \
+    || fail 'the random package-generated NVMe host ID must not enter the Live root'
+grep -Fq '/var/cache/apt/*cache.bin' \
+    "${repo_root}/live/config/hooks/live/0900-ares-cleanup.hook.chroot" \
+    || fail 'nondeterministic APT binary caches must not enter the Live root'
+grep -Fqx 'etc/nvme/hostid' \
+    "${repo_root}/live/config/rootfs/excludes" \
+    || fail 'SquashFS must exclude package-generated NVMe host IDs'
+grep -Fqx 'var/cache/apt/*cache.bin' \
+    "${repo_root}/live/config/rootfs/excludes" \
+    || fail 'SquashFS must exclude APT caches regenerated by live-build'
+grep -Fq 'A build-specific NVMe host identifier remains' \
+    "${repo_root}/live/config/hooks/live/0990-ares-final-policy-check.hook.chroot" \
+    || fail 'the final policy hook must reject build-specific NVMe host IDs'
+grep -Fq 'A nondeterministic APT binary cache remains' \
+    "${repo_root}/live/config/hooks/live/0990-ares-final-policy-check.hook.chroot" \
+    || fail 'the final policy hook must reject APT binary caches'
 grep -q '^ExecStart=/usr/lib/ares/ares-hardware-boot$' \
     "${repo_root}/live/config/includes.chroot/usr/lib/systemd/system/ares-hardware.service" \
     || fail 'platform readiness must wait only for the boot-critical inventory'
@@ -221,5 +291,8 @@ grep -Fq 'u ares 1000:1000' \
 grep -q '^ConditionKernelCommandLine=ares.mode=forensic$' \
     "${repo_root}/live/config/includes.chroot/usr/lib/systemd/system/ares-block-readonly@.service" \
     || fail 'forensic block units must be skipped outside forensic mode'
+
+"${repo_root}/scripts/test_boot_integrity.sh"
+"${repo_root}/scripts/test_reproducible_verity.sh"
 
 printf '%s\n' 'ARES OS source validation passed.'

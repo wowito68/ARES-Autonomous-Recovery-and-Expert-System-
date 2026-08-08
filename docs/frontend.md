@@ -1,8 +1,8 @@
 # Diseño del frontend
 
 > Estado: existe una primera interfaz estática sin dependencias externas,
-> servida por FastAPI y con resumen, estado de IA/chat local y ejecución
-> explícita de la capability pasiva Disk Analysis. La SPA
+> servida por FastAPI y con resumen, estado de IA/chat local, Planner de
+> Capabilities y ejecución explícita de la capability pasiva Disk Analysis. La SPA
 > React/TypeScript descrita abajo sigue siendo el diseño objetivo.
 
 ## Enfoque
@@ -16,9 +16,10 @@ evitar Node y dependencias de red en esta etapa. Arranca directamente desde el
 autostart XDG de Xfce, espera readiness del backend y abre Firefox en kiosco. Si
 el API no arranca, muestra una página local degradada en vez de dejar una
 pantalla vacía. El texto del modelo se inserta únicamente con `textContent`.
-La vista ARES v2 consulta el catálogo, inicia únicamente
-`storage.disk-analysis` con un input cerrado y presenta resumen, hallazgos y
-revisión del Knowledge Graph. No acepta rutas o comandos.
+La vista ARES v2 consulta el catálogo, construye planes inmutables mediante
+`POST /planner/plan`, inicia únicamente `storage.disk-analysis` con un input
+cerrado y presenta resumen, hallazgos y revisión del Knowledge Graph. El Planner
+no ejecuta su resultado y la interfaz no acepta rutas, Tools o comandos.
 
 ## Layout
 

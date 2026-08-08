@@ -7,9 +7,9 @@ printf '%s\n' \
     '# Verified offline update packs will provide a temporary signed source.' \
     > /etc/apt/sources.list
 
-rm -f /etc/ssh/ssh_host_* /var/lib/dbus/machine-id
+rm -f /etc/ssh/ssh_host_* /etc/nvme/hostid /var/lib/dbus/machine-id
 rm -f /etc/NetworkManager/system-connections/* 2>/dev/null || true
-rm -rf /var/cache/apt/archives/*.deb /var/lib/apt/lists/*
+rm -rf /var/cache/apt/archives/*.deb /var/cache/apt/*cache.bin /var/lib/apt/lists/*
 : > /etc/machine-id
 chmod 0444 /etc/machine-id
 
