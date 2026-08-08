@@ -62,7 +62,7 @@ def _result(tool: str, stdout: str, exit_code: int = 0) -> ProcessResult:
 
 
 def _inventory(path: Path) -> None:
-    path.parent.mkdir(parents=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
             {
