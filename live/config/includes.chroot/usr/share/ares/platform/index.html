@@ -7,6 +7,7 @@
     <title>ARES OS</title>
     <link rel="stylesheet" href="style.css">
     <script src="app.js" defer></script>
+    <script src="storage.js" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#contenido">Saltar al contenido</a>
@@ -23,7 +24,7 @@
           <a class="nav-link active" href="#resumen">Resumen</a>
           <a class="nav-link" href="#asistente">Asistente local</a>
           <a class="nav-link" href="#planner">Planner</a>
-          <a class="nav-link" href="#capabilities">Capabilities</a>
+          <a class="nav-link" href="#capabilities">Storage</a>
           <a class="nav-link" href="#hardware">Hardware</a>
         </nav>
         <div class="privacy-note">
@@ -195,34 +196,35 @@
         >
           <div class="section-heading">
             <div>
-              <p class="section-kicker">ARES V2 · OPERACIONES DE ALTO NIVEL</p>
-              <h2 id="capabilities-title">Capabilities</h2>
+              <p class="section-kicker">STORAGE · VERTICAL SLICE READ-ONLY</p>
+              <h2 id="capabilities-title">Storage</h2>
             </div>
             <span id="capability-badge" class="status-badge pending">
-              Consultando catálogo
+              Consultando Capability
             </span>
           </div>
 
           <div class="capability-layout">
             <article class="capability-card">
               <div>
-                <span class="capability-risk">OBSERVE · RIESGO BAJO</span>
+                <span class="capability-risk">OBSERVE · READ ONLY · RIESGO BAJO</span>
                 <h3>Disk Analysis</h3>
                 <p>
-                  Analiza el inventario público que ARES recolectó durante el arranque.
-                  No abre dispositivos, no ejecuta comandos aportados por el usuario y
-                  no modifica el almacenamiento.
+                  Detecta discos, particiones, filesystems, montajes, uso, sistemas operativos
+                  y evidencia SMART disponible. La Capability no formatea, no repara, no monta,
+                  no reparticiona y no escribe en dispositivos.
                 </p>
               </div>
               <button id="disk-analysis-button" type="button" disabled>
-                Analizar discos
+                Analizar almacenamiento
               </button>
             </article>
 
             <div id="capability-results" class="capability-results" aria-live="polite">
               <p class="empty-state">
-                Ejecuta la capability para generar un resumen auditable y actualizar el
-                Knowledge Graph local.
+                Ejecuta el análisis para ver Estado, Confianza, discos, particiones,
+                filesystems, montajes, uso, SMART, sistemas operativos, Hallazgos,
+                Evidencia, Recomendaciones y limitaciones reportadas por el backend.
               </p>
             </div>
           </div>
