@@ -18,12 +18,16 @@ _ENTRY_POINT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
 
 class Environment(StrEnum):
+    """Supported runtime environments."""
+
     DEVELOPMENT = "development"
     TEST = "test"
     PRODUCTION = "production"
 
 
 class LogFormat(StrEnum):
+    """Supported log encodings."""
+
     JSON = "json"
     TEXT = "text"
 
@@ -70,6 +74,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def reject_unsafe_production_diagnostics(self) -> Self:
+        """Prevent unsafe diagnostics and untrusted plugin discovery policy."""
+
         if self.environment is Environment.PRODUCTION and self.database_echo:
             raise ValueError("database_echo must be disabled in production")
         endpoint = urlsplit(self.ai_base_url)
@@ -92,4 +98,6 @@ class Settings(BaseSettings):
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
+    """Return the process-wide immutable settings instance."""
+
     return Settings()
