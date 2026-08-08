@@ -32,6 +32,14 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --frozen --dev
 
+      - name: Report remaining formatting diff
+        continue-on-error: true
+        run: >-
+          uv run --frozen ruff format --diff
+          src/ares/actions/storage_vertical.py
+          src/ares/diagnostics/store.py
+          src/ares/storage/store.py
+
       - name: Enforce formatting
         run: uv run --frozen ruff format --check src tests
 
