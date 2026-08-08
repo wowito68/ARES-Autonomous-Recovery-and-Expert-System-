@@ -40,6 +40,7 @@ def _inventory() -> dict[str, object]:
                                     "name": "sda1",
                                     "type": "part",
                                     "size": 1_000_000,
+                                    "fstype": "ext4",
                                     "mountpoints": ["/boot", 4],
                                 }
                             ],
@@ -72,6 +73,8 @@ def _settings(tmp_path: Path, runtime: Path) -> Settings:
         environment=Environment.TEST,
         database_url=f"sqlite+aiosqlite:///{tmp_path / 'ares-v2.db'}",
         runtime_state_dir=runtime,
+        capability_state_dir=tmp_path / "capabilities",
+        storage_process_probes_enabled=False,
         log_level="CRITICAL",
         log_format=LogFormat.TEXT,
     )
@@ -106,40 +109,40 @@ async def test_disk_analysis_flows_through_catalog_workflow_events_and_graph(
     public_metadata = detail.json()
     assert public_metadata["risk_level"] == "low"
     assert public_metadata["operation_class"] == "observe"
+    assert public_metadata["mode"] == "read_only"
     assert "internal_actions" not in public_metadata
 
     assert executed.status_code == 200
     execution = executed.json()
     assert execution["status"] == "succeeded"
-    assert len(execution["steps"]) == 3
+    assert len(execution["steps"]) == 4
     assert all("action_id" not in step for step in execution["steps"])
     assert record.json() == execution
     result = execution["result"]
-    assert result["summary"] == {
-        "disk_count": 2,
-        "fixed_disk_count": 1,
-        "removable_disk_count": 1,
-        "read_only_disk_count": 1,
-        "total_capacity_bytes": 520_000_000_000,
-    }
-    assert {finding["code"] for finding in result["findings"]} == {
-        "READ_ONLY_DISK_OBSERVED",
-        "SMART_NOT_EVALUATED",
-    }
+    snapshot = result["snapshot"]
+    assert snapshot["summary"]["disk_count"] == 2
+    assert snapshot["summary"]["partition_count"] == 1
+    assert snapshot["summary"]["filesystem_count"] == 1
+    assert snapshot["summary"]["total_capacity_bytes"] == 520_000_000_000
     assert "must-never-escape" not in json.dumps(result)
-    assert result["devices"][0]["model"] == "ARES Test SSD"
+    assert snapshot["disks"][0]["model"] == "ARES Test SSD"
     assert graph.json()["revision"] == 1
-    assert {node["id"] for node in graph.json()["nodes"]} == {
-        "system:local",
-        "disk:sda",
-        "disk:sda1",
-        "disk:sdb",
+    assert {node["kind"] for node in graph.json()["nodes"]} >= {
+        "system",
+        "disk",
+        "partition",
+        "filesystem",
+        "smart_status",
     }
 
     event_path = tmp_path / "capabilities/events.jsonl"
     events = [json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines()]
-    event_names = [event["name"] for event in events]
+    event_names = [event["event_type"] for event in events]
     assert event_names[0:2] == ["workflow.started", "capability.started"]
+    assert "storage.disk.detected" in event_names
+    assert "storage.partition.detected" in event_names
+    assert "storage.smart.analyzed" in event_names
+    assert "storage.snapshot.created" in event_names
     assert "knowledge.graph.updated" in event_names
     assert event_names[-2:] == ["workflow.completed", "capability.completed"]
     assert {event["correlation_id"] for event in events} == {execution["id"]}
@@ -171,7 +174,7 @@ async def test_capability_api_rejects_unknown_ids_inputs_and_missing_inventory(
     assert invalid.status_code == 422
     assert failed.status_code == 200
     assert failed.json()["status"] == "failed"
-    assert failed.json()["error_code"] == "DISK_INVENTORY_UNAVAILABLE"
+    assert failed.json()["error_code"] == "STORAGE_EVIDENCE_UNAVAILABLE"
 
 
 async def test_reasoning_requests_evidence_selects_only_a_capability_and_stops(

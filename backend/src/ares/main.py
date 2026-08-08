@@ -24,7 +24,7 @@ from ares.planner import Planner
 from ares.reasoning import ReasoningEngine
 from ares.storage.service import StorageAnalysisService
 from ares.storage.store import StorageSnapshotStore
-from ares.tools import StorageToolSuite
+from ares.tools import ReadOnlyStorageProcessRunner, SafeProcessRunner, StorageToolSuite
 from ares.workflows import WorkflowEngine
 
 
@@ -55,8 +55,10 @@ def create_app(
     knowledge_graph = KnowledgeGraph(capability_state_dir / "knowledge-graph.json")
     snapshot_store = StorageSnapshotStore(capability_state_dir / "storage/snapshots")
     diagnostic_store = DiagnosticStore(capability_state_dir / "diagnostics")
+    storage_runner = ReadOnlyStorageProcessRunner(SafeProcessRunner())
     storage_tools = StorageToolSuite(
         inventory_path,
+        runner=storage_runner,
         process_probes_enabled=resolved_settings.storage_process_probes_enabled,
     )
     workflow_engine = WorkflowEngine(event_bus, knowledge_graph)

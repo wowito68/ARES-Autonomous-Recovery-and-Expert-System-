@@ -46,6 +46,7 @@ def _settings(tmp_path: Path, runtime: Path) -> Settings:
         database_url=f"sqlite+aiosqlite:///{tmp_path / 'platform.db'}",
         runtime_state_dir=runtime,
         capability_state_dir=tmp_path / "capability-state",
+        storage_process_probes_enabled=False,
         log_level="CRITICAL",
         log_format=LogFormat.TEXT,
     )
@@ -98,8 +99,10 @@ async def test_catalog_generates_input_docs_versions_and_command_free_plan(
     capability = detail.json()
     assert capability["plugin_id"] == "ares.storage-core"
     assert capability["active"] is True
+    assert capability["mode"] == "read_only"
     assert capability["input_schema"]["additionalProperties"] is False
     assert capability["input_schema"]["properties"]["scope"]["default"] == "all_detected"
+    assert capability["output_schema"]["title"] == "StorageCapabilityResult"
     assert versions.json()["count"] == 1
 
     assert needs_evidence.json()["status"] == "needs_evidence"
@@ -116,6 +119,13 @@ class _Input(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     value: int
+
+
+class _Output(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    value: int
+    version: str
 
 
 @dataclass
@@ -137,6 +147,7 @@ class _EchoAction:
 
 class _VersionedCapability:
     input_model = _Input
+    output_model = _Output
 
     def __init__(self, version: str) -> None:
         compatibility = OSCompatibility(families=("debian",), architectures=("amd64",))
@@ -227,6 +238,7 @@ async def test_manager_selects_latest_version_and_keeps_generated_docs(
     descriptor = manager.descriptor("test.versioned-capability")
     assert descriptor is not None
     assert descriptor.input_schema["required"] == ["value"]
+    assert descriptor.output_schema["required"] == ["value", "version"]
 
     execution = await manager.execute("test.versioned-capability", {"value": 7})
     assert execution.result == {"value": 7, "version": "2.0.0"}

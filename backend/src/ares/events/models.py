@@ -7,7 +7,14 @@ from enum import StrEnum
 from typing import Annotated, Any
 from uuid import uuid4
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    model_validator,
+)
 
 
 def utc_now() -> datetime:
@@ -24,7 +31,12 @@ class EventSeverity(StrEnum):
 
 
 class AresEvent(BaseModel):
-    """Immutable event envelope written before it is dispatched."""
+    """Immutable event envelope written before it is dispatched.
+
+    Canonical serialized fields follow the vertical-slice envelope while the
+    legacy ``id``/``name``/``occurred_at`` fields remain as computed aliases
+    during the v2 migration so existing journal readers continue to work.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
 
@@ -54,14 +66,23 @@ class AresEvent(BaseModel):
                 value = {**value, "session_id": correlation_id}
         return value
 
+    @computed_field
     @property
     def id(self) -> str:
+        """Legacy serialized alias for ``event_id``."""
+
         return self.event_id
 
+    @computed_field
     @property
     def name(self) -> str:
+        """Legacy serialized alias for ``event_type``."""
+
         return self.event_type
 
+    @computed_field
     @property
     def occurred_at(self) -> datetime:
+        """Legacy serialized alias for ``timestamp``."""
+
         return self.timestamp

@@ -1,5 +1,6 @@
 """Low-level, server-owned tool adapters. Never exposed to the LLM or public API."""
 
+from ares.tools.read_only import ReadOnlyStorageProcessRunner
 from ares.tools.storage import (
     BlkidProbe,
     BlockDeviceProbe,
@@ -27,6 +28,7 @@ __all__ = [
     "OperatingSystemProbe",
     "ProcessResult",
     "ProcessRunner",
+    "ReadOnlyStorageProcessRunner",
     "SafeProcessRunner",
     "SmartProbe",
     "StorageEvidence",

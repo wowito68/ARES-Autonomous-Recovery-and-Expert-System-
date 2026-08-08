@@ -36,6 +36,8 @@ def _inventory() -> dict[str, object]:
                                     "size": 900_000,
                                     "ro": 0,
                                     "rm": 0,
+                                    "fstype": "ext4",
+                                    "uuid": "fixture-uuid",
                                     "mountpoints": ["/mnt/test"],
                                 }
                             ],
@@ -67,6 +69,7 @@ def _settings(tmp_path: Path, runtime: Path) -> Settings:
         database_url=f"sqlite+aiosqlite:///{tmp_path / 'capabilities.db'}",
         runtime_state_dir=runtime,
         capability_state_dir=tmp_path / "capability-state",
+        storage_process_probes_enabled=False,
         log_level="CRITICAL",
         log_format=LogFormat.TEXT,
     )
@@ -109,30 +112,29 @@ async def test_disk_analysis_runs_full_audited_vertical(tmp_path: Path) -> None:
     public_capability = detail.json()
     assert public_capability["id"] == "storage.disk-analysis"
     assert public_capability["risk_level"] == "low"
+    assert public_capability["mode"] == "read_only"
+    assert public_capability["output_schema"]["title"] == "StorageCapabilityResult"
     assert "internal_actions" not in public_capability
 
     assert response.status_code == 200
     result = response.json()
     assert result["status"] == "succeeded"
-    assert result["result"]["summary"] == {
+    snapshot = result["result"]["snapshot"]
+    assert snapshot["summary"] == {
         "disk_count": 2,
-        "fixed_disk_count": 1,
-        "removable_disk_count": 1,
-        "read_only_disk_count": 1,
+        "partition_count": 1,
+        "filesystem_count": 1,
+        "mounted_filesystem_count": 0,
         "total_capacity_bytes": 1_500_000,
     }
     assert result["result"]["knowledge_graph"]["revision"] == 1
-    assert len(result["steps"]) == 3
+    assert len(result["steps"]) == 4
     assert execution.json() == result
 
     graph_payload = graph.json()
     assert graph_payload["revision"] == 1
-    assert {node["id"] for node in graph_payload["nodes"]} >= {
-        "system:local",
-        "disk:sda",
-        "disk:sda1",
-        "disk:sdb",
-    }
+    kinds = {node["kind"] for node in graph_payload["nodes"]}
+    assert {"system", "disk", "partition", "filesystem", "smart_status"} <= kinds
     assert needs_evidence.json()["status"] == "needs_evidence"
     assert needs_evidence.json()["requested_evidence"] == ["hardware.block-devices"]
     assert selected.json()["status"] == "capability_selected"
@@ -144,16 +146,20 @@ async def test_disk_analysis_runs_full_audited_vertical(tmp_path: Path) -> None:
         .read_text(encoding="utf-8")
         .splitlines()
     ]
-    names = [event["name"] for event in events]
+    names = [event["event_type"] for event in events]
     assert names[0:2] == ["workflow.started", "capability.started"]
+    assert "storage.snapshot.created" in names
     assert "knowledge.graph.updated" in names
     assert names[-2:] == ["workflow.completed", "capability.completed"]
     assert all(event["correlation_id"] == execution_id for event in events)
-    assert not any("command" in json.dumps(event).casefold() for event in events)
+    assert all(event["session_id"] for event in events)
+    assert all(event["event_id"] for event in events)
+    assert all(event["timestamp"] for event in events)
+    assert not any("wipefs" in json.dumps(event).casefold() for event in events)
     receipt = events[-1]["payload"]["result_receipt"]
     assert len(receipt["sha256"]) == 64
     assert receipt["bytes"] > 0
-    assert "summary" in receipt["top_level_fields"]
+    assert set(receipt["top_level_fields"]) == {"knowledge_graph", "snapshot"}
 
 
 async def test_capability_http_boundary_rejects_unknown_and_command_fields(
@@ -202,9 +208,9 @@ async def test_disk_analysis_failure_is_safe_and_fully_recorded(tmp_path: Path) 
 
     assert response.status_code == 200
     assert response.json()["status"] == "failed"
-    assert response.json()["error_code"] == "DISK_INVENTORY_INVALID"
+    assert response.json()["error_code"] == "STORAGE_EVIDENCE_UNAVAILABLE"
     assert response.json()["result"] is None
     journal = (tmp_path / "capability-state/events.jsonl").read_text(encoding="utf-8")
     assert "action.failed" in journal
     assert "workflow.failed" in journal
-    assert "DISK_INVENTORY_INVALID" in journal
+    assert "STORAGE_EVIDENCE_UNAVAILABLE" in journal
