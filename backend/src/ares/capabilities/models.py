@@ -39,6 +39,13 @@ class OperationClass(StrEnum):
     RECOVER = "recover"
 
 
+class CapabilityMode(StrEnum):
+    """Explicit storage/system mutation ceiling for a capability."""
+
+    READ_ONLY = "read_only"
+    MUTATING = "mutating"
+
+
 class PermissionRequirement(BaseModel):
     """Semantic permission; it is mapped to OS privileges outside the plugin."""
 
@@ -69,7 +76,7 @@ class RollbackPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     supported: bool
-    strategy: Annotated[str, Field(min_length=3, max_length=240)]
+    strategy: Annotated[str, Field(min_length=3, max_length=320)]
 
 
 class AuditPolicy(BaseModel):
@@ -95,6 +102,7 @@ class CapabilityMetadata(BaseModel):
     objective: Annotated[str, Field(min_length=10, max_length=500)]
     category: CapabilityCategory
     operation: OperationClass
+    mode: CapabilityMode = CapabilityMode.READ_ONLY
     os_compatibility: OSCompatibility
     risk: RiskLevel
     estimated_duration_seconds: Annotated[float, Field(gt=0, le=3600)]
@@ -132,6 +140,7 @@ class CapabilityDescriptor(BaseModel):
 
     metadata: CapabilityMetadata
     input_schema: dict[str, Any]
+    output_schema: dict[str, Any] = Field(default_factory=dict)
     plugin_id: str
     plugin_version: str
     active: bool

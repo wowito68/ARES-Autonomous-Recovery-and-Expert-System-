@@ -18,16 +18,12 @@ _ENTRY_POINT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
 
 class Environment(StrEnum):
-    """Supported runtime environments."""
-
     DEVELOPMENT = "development"
     TEST = "test"
     PRODUCTION = "production"
 
 
 class LogFormat(StrEnum):
-    """Supported log encodings."""
-
     JSON = "json"
     TEXT = "text"
 
@@ -54,6 +50,7 @@ class Settings(BaseSettings):
     readiness_timeout_seconds: Annotated[float, Field(gt=0, le=30)] = 2.0
     runtime_state_dir: Path = Path("/run/ares")
     capability_state_dir: Path | None = None
+    storage_process_probes_enabled: bool = True
     capability_plugin_entrypoint_group: Annotated[
         str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_.-]{2,127}$")
     ] = "ares.capabilities"
@@ -73,8 +70,6 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def reject_unsafe_production_diagnostics(self) -> Self:
-        """Prevent unsafe diagnostics and untrusted plugin discovery policy."""
-
         if self.environment is Environment.PRODUCTION and self.database_echo:
             raise ValueError("database_echo must be disabled in production")
         endpoint = urlsplit(self.ai_base_url)
@@ -97,6 +92,4 @@ class Settings(BaseSettings):
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """Return the process-wide immutable settings instance."""
-
     return Settings()

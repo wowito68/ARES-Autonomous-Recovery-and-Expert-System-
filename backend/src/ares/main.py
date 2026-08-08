@@ -16,11 +16,15 @@ from ares.core.logging import configure_logging
 from ares.core.middleware import RequestContextMiddleware
 from ares.core.problems import install_problem_handlers
 from ares.database import Database
+from ares.diagnostics import DiagnosticStore
 from ares.events import EventBus, JsonlEventSink
 from ares.knowledge import KnowledgeGraph
 from ares.llm import AIRuntime, OllamaRuntime
 from ares.planner import Planner
 from ares.reasoning import ReasoningEngine
+from ares.storage.service import StorageAnalysisService
+from ares.storage.store import StorageSnapshotStore
+from ares.tools import StorageToolSuite
 from ares.workflows import WorkflowEngine
 
 
@@ -46,18 +50,21 @@ def create_app(
             if database.database_path is not None
             else resolved_settings.runtime_state_dir / "capabilities"
         )
+    inventory_path = resolved_settings.runtime_state_dir / "hardware/public/inventory-v1.json"
     event_bus = EventBus(JsonlEventSink(capability_state_dir / "events.jsonl"))
     knowledge_graph = KnowledgeGraph(capability_state_dir / "knowledge-graph.json")
+    snapshot_store = StorageSnapshotStore(capability_state_dir / "storage/snapshots")
+    diagnostic_store = DiagnosticStore(capability_state_dir / "diagnostics")
+    storage_tools = StorageToolSuite(
+        inventory_path,
+        process_probes_enabled=resolved_settings.storage_process_probes_enabled,
+    )
     workflow_engine = WorkflowEngine(event_bus, knowledge_graph)
     capability_manager = CapabilityManager(
         workflow_engine,
         live_mode=_read_live_mode(resolved_settings),
     )
-    builtins = (
-        DiskAnalysisPlugin(
-            resolved_settings.runtime_state_dir / "hardware/public/inventory-v1.json"
-        ),
-    )
+    builtins = (DiskAnalysisPlugin(storage_tools, snapshot_store),)
     capability_manager.load(
         discover_plugins(
             builtins,
@@ -68,12 +75,23 @@ def create_app(
     capability_manager.seal()
     reasoning_engine = ReasoningEngine(capability_manager)
     planner = Planner(reasoning_engine, capability_manager)
+    storage_analysis_service = StorageAnalysisService(
+        capability_manager,
+        reasoning_engine,
+        snapshot_store,
+        diagnostic_store,
+        event_bus,
+        storage_tools,
+        inventory_path,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         database.prepare_storage()
         event_bus.prepare()
         knowledge_graph.prepare()
+        snapshot_store.prepare()
+        diagnostic_store.prepare()
         try:
             yield
         finally:
@@ -100,6 +118,10 @@ def create_app(
     application.state.capability_manager = capability_manager
     application.state.reasoning_engine = reasoning_engine
     application.state.planner = planner
+    application.state.storage_snapshot_store = snapshot_store
+    application.state.diagnostic_store = diagnostic_store
+    application.state.storage_tools = storage_tools
+    application.state.storage_analysis_service = storage_analysis_service
     application.add_middleware(RequestContextMiddleware)
     install_problem_handlers(application)
     application.include_router(api_router, prefix=resolved_settings.api_prefix)
