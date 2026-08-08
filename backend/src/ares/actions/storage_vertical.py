@@ -216,9 +216,7 @@ class ProjectStorageSnapshotAction:
                 None,
             )
             if partition is not None:
-                edges.append(
-                    GraphEdge(source=partition.id, relation="mounted_at", target=mount.id)
-                )
+                edges.append(GraphEdge(source=partition.id, relation="mounted_at", target=mount.id))
         for os_item in snapshot.operating_systems:
             nodes.append(
                 GraphNode(

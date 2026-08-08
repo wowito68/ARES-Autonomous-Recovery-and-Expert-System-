@@ -9,7 +9,11 @@ from pydantic import BaseModel, ConfigDict
 
 from ares.core.problems import AresProblem, ProblemDetail
 from ares.storage.models import DiskSnapshot, SystemStorageSnapshot
-from ares.storage.service import StorageAnalysisError, StorageAnalysisResponse, StorageAnalysisService
+from ares.storage.service import (
+    StorageAnalysisError,
+    StorageAnalysisResponse,
+    StorageAnalysisService,
+)
 
 router = APIRouter()
 

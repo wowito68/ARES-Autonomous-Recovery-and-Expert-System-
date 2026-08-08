@@ -226,7 +226,12 @@ class StorageToolSuite:
                 event_bus,
                 correlation_id,
                 "lsblk",
-                ("--json", "--bytes", "--output", "NAME,PATH,TYPE,SIZE,RO,RM,MODEL,VENDOR,TRAN,PKNAME,FSTYPE,FSVER,UUID,LABEL,MOUNTPOINTS,SERIAL,WWN"),
+                (
+                    "--json",
+                    "--bytes",
+                    "--output",
+                    "NAME,PATH,TYPE,SIZE,RO,RM,MODEL,VENDOR,TRAN,PKNAME,FSTYPE,FSVER,UUID,LABEL,MOUNTPOINTS,SERIAL,WWN",
+                ),
                 timeout=4,
             )
             availability.append(lsblk[0])
@@ -397,7 +402,9 @@ def parse_lsblk_json(text: str) -> tuple[BlockDeviceProbe, ...]:
     return tuple(output)
 
 
-def _append_lsblk_device(raw: object, output: list[BlockDeviceProbe], parent: str | None) -> None:
+def _append_lsblk_device(
+    raw: object, output: list[BlockDeviceProbe], parent: str | None
+) -> None:
     if not isinstance(raw, dict) or len(output) >= 512:
         return
     path = raw.get("path")
@@ -407,11 +414,15 @@ def _append_lsblk_device(raw: object, output: list[BlockDeviceProbe], parent: st
     identity_parts = [raw.get("wwn"), raw.get("serial"), raw.get("model"), path]
     identity = _identity_hash(tuple(item for item in identity_parts if isinstance(item, str)))
     mountpoints = raw.get("mountpoints")
-    safe_mounts = tuple(
-        item[:4096]
-        for item in mountpoints
-        if isinstance(item, str) and item.startswith("/") and "\x00" not in item
-    ) if isinstance(mountpoints, list) else ()
+    safe_mounts = (
+        tuple(
+            item[:4096]
+            for item in mountpoints
+            if isinstance(item, str) and item.startswith("/") and "\x00" not in item
+        )
+        if isinstance(mountpoints, list)
+        else ()
+    )
     parent_name = raw.get("pkname")
     parent_path = parent
     if parent_path is None and isinstance(parent_name, str) and parent_name:
@@ -582,7 +593,9 @@ def parse_smartctl_json(text: str, device: str) -> SmartProbe:
     return SmartProbe(device=device, status=status, passed=passed, temperature_celsius=temp)
 
 
-def detect_operating_systems(mounts: tuple[MountProbe, ...]) -> tuple[OperatingSystemProbe, ...]:
+def detect_operating_systems(
+    mounts: tuple[MountProbe, ...],
+) -> tuple[OperatingSystemProbe, ...]:
     output: list[OperatingSystemProbe] = []
     seen: set[tuple[str, str]] = set()
     for mount in mounts[:128]:

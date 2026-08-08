@@ -159,7 +159,9 @@ class CapabilityManager:
             if (descriptor := self.descriptor(capability_id, version=version)) is not None
         )
 
-    def get(self, capability_id: str, *, version: str | None = None) -> CapabilityMetadata | None:
+    def get(
+        self, capability_id: str, *, version: str | None = None
+    ) -> CapabilityMetadata | None:
         descriptor = self.descriptor(capability_id, version=version)
         return descriptor.metadata if descriptor is not None else None
 
@@ -224,7 +226,10 @@ class CapabilityManager:
         ):
             if not isinstance(model, type) or not issubclass(model, BaseModel):
                 raise ValueError(f"capability {label} must be a Pydantic model")
-        if metadata.mode is CapabilityMode.READ_ONLY and metadata.operation is not OperationClass.OBSERVE:
+        if (
+            metadata.mode is CapabilityMode.READ_ONLY
+            and metadata.operation is not OperationClass.OBSERVE
+        ):
             raise ValueError("read-only capabilities must use observe operation class")
         self._validate_compatibility(
             metadata.os_compatibility.families,

@@ -31,7 +31,11 @@ class DiagnosticStore:
             return None
         path = self.directory / f"{diagnostic_id}.json"
         try:
-            if path.is_symlink() or not path.is_file() or path.stat().st_size > _MAX_DIAGNOSTIC_BYTES:
+            if (
+                path.is_symlink()
+                or not path.is_file()
+                or path.stat().st_size > _MAX_DIAGNOSTIC_BYTES
+            ):
                 return None
             text = await asyncio.to_thread(path.read_text, encoding="utf-8")
             return DiagnosticResult.model_validate_json(text)
@@ -64,4 +68,6 @@ class DiagnosticStore:
 
 
 def _safe_id(value: str) -> bool:
-    return 8 <= len(value) <= 128 and all(character.isalnum() or character in "-_" for character in value)
+    return 8 <= len(value) <= 128 and all(
+        character.isalnum() or character in "-_" for character in value
+    )
