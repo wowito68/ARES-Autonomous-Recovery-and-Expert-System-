@@ -13,19 +13,18 @@ from uuid import uuid4
 
 from ares.audit import AuditLedger, AuditLedgerError
 from ares.filesystems.adapters import adapter_for
-from ares.filesystems.models import (
-    FilesystemAuthorizationGrant,
-    FilesystemRepairOutcome,
-    FilesystemRepairPlan,
-)
-from ares.protection import ProtectionCheckpointStatus
-from ares.tools.filesystem import FilesystemToolError, FilesystemToolSuite, RepairEventCallback
+from ares.filesystems.integrity import repair_plan_integrity_valid
+from ares.filesystems.models import FilesystemAuthorizationGrant, FilesystemRepairPlan
+from ares.protection import ProtectionCheckpointStatus, ProtectionCheckpointStore
+from ares.tools.filesystem import FilesystemToolError, FilesystemToolSuite
 
 
 class FilesystemConsentClient(Protocol):
     async def request_filesystem(self, plan: FilesystemRepairPlan) -> dict[str, Any]: ...
 
-    async def wait(self, challenge_id: str, timeout_seconds: float = 600.0) -> dict[str, Any]: ...
+    async def wait(
+        self, challenge_id: str, timeout_seconds: float = 600.0
+    ) -> dict[str, Any]: ...
 
 
 class FilesystemBroker:
@@ -36,13 +35,17 @@ class FilesystemBroker:
         tools: FilesystemToolSuite,
         audit: AuditLedger,
         consent: FilesystemConsentClient,
+        checkpoints: ProtectionCheckpointStore,
         *,
         allowed_client_uids: frozenset[int] = frozenset({971, 1000}),
-        emergency_journal: Path = Path("/var/lib/ares/broker/filesystem-reconciliation.jsonl"),
+        emergency_journal: Path = Path(
+            "/var/lib/ares/broker/filesystem-reconciliation.jsonl"
+        ),
     ) -> None:
         self.tools = tools
         self.audit = audit
         self.consent = consent
+        self.checkpoints = checkpoints
         self.allowed_client_uids = allowed_client_uids
         self.emergency_journal = emergency_journal
         self._grants: dict[str, FilesystemAuthorizationGrant] = {}
@@ -77,7 +80,9 @@ class FilesystemBroker:
             session_id=inspection.id,
             payload={
                 "target_fingerprint": inspection.identity.fingerprint_sha256,
-                "filesystem": inspection.filesystem.value if inspection.filesystem else None,
+                "filesystem": (
+                    inspection.filesystem.value if inspection.filesystem else None
+                ),
                 "health": inspection.health.value,
                 "mounted": inspection.mount.mounted,
             },
@@ -86,11 +91,15 @@ class FilesystemBroker:
 
     async def _authorize(self, request: dict[str, Any], send) -> dict[str, Any]:
         plan = FilesystemRepairPlan.model_validate(request.get("plan"))
-        self._validate_plan(plan)
+        await self._validate_plan(plan)
         await self.tools.revalidate(plan.target)
-        current_mount = self.tools.mount_checker.inspect(plan.target)
+        current_mount = await asyncio.to_thread(
+            self.tools.mount_checker.inspect, plan.target
+        )
         if current_mount != plan.mount:
             raise FilesystemToolError("FILESYSTEM_MOUNT_STATE_CHANGED")
+        checkpoint = plan.protection_checkpoint
+        assert checkpoint is not None
         await self.audit.append(
             event_type="repair.authorization.intent",
             source="ares-tool-broker",
@@ -105,23 +114,32 @@ class FilesystemBroker:
                 "filesystem_uuid": plan.target.filesystem_uuid,
                 "partuuid": plan.target.partuuid,
                 "filesystem": plan.filesystem.value,
-                "checkpoint_id": plan.protection_checkpoint.id,
+                "checkpoint_id": checkpoint.id,
                 "risk": "high",
             },
         )
-        challenge = await self.consent.request_filesystem(plan)
-        challenge_id = challenge.get("challenge_id")
-        if not isinstance(challenge_id, str):
-            raise FilesystemToolError("FILESYSTEM_AUTHORIZATION_FAILED")
-        await send({"type": "authorization_requested", "challenge_id": challenge_id})
-        decision = await self.consent.wait(challenge_id)
+        try:
+            challenge = await self.consent.request_filesystem(plan)
+            challenge_id = challenge.get("challenge_id")
+            if not isinstance(challenge_id, str):
+                raise FilesystemToolError("FILESYSTEM_AUTHORIZATION_FAILED")
+            await send({"type": "authorization_requested", "challenge_id": challenge_id})
+            decision = await self.consent.wait(challenge_id)
+        except FilesystemToolError:
+            raise
+        except RuntimeError as exc:
+            raise FilesystemToolError("FILESYSTEM_AUTHORIZATION_FAILED") from exc
         if decision.get("decision") != "approved":
             raise FilesystemToolError("FILESYSTEM_AUTHORIZATION_DENIED")
         operator_uid = decision.get("operator_uid")
         if not isinstance(operator_uid, int) or operator_uid < 0:
             raise FilesystemToolError("FILESYSTEM_AUTHORIZATION_INVALID")
+        await self._validate_plan(plan)
         await self.tools.revalidate(plan.target)
-        if self.tools.mount_checker.inspect(plan.target) != plan.mount:
+        current_mount = await asyncio.to_thread(
+            self.tools.mount_checker.inspect, plan.target
+        )
+        if current_mount != plan.mount:
             raise FilesystemToolError("FILESYSTEM_MOUNT_STATE_CHANGED")
         grant = FilesystemAuthorizationGrant(
             id=uuid4().hex,
@@ -132,7 +150,9 @@ class FilesystemBroker:
             target_fingerprint_sha256=plan.target.fingerprint_sha256,
             plan_fingerprint_sha256=plan.fingerprint_sha256,
             operator_uid=operator_uid,
-            expires_at=min(plan.expires_at, datetime.now(UTC) + timedelta(minutes=5)),
+            expires_at=min(
+                plan.expires_at, datetime.now(UTC) + timedelta(minutes=5)
+            ),
         )
         async with self._lock:
             self._grants[grant.id] = grant
@@ -160,10 +180,15 @@ class FilesystemBroker:
             stored = self._grants.pop(grant.id, None)
         if not self._grant_matches(plan, grant, stored):
             raise FilesystemToolError("FILESYSTEM_AUTHORIZATION_INVALID")
-        self._validate_plan(plan)
+        await self._validate_plan(plan)
         await self.tools.revalidate(plan.target)
-        if self.tools.mount_checker.inspect(plan.target) != plan.mount:
+        current_mount = await asyncio.to_thread(
+            self.tools.mount_checker.inspect, plan.target
+        )
+        if current_mount != plan.mount:
             raise FilesystemToolError("FILESYSTEM_MOUNT_STATE_CHANGED")
+        checkpoint = plan.protection_checkpoint
+        assert checkpoint is not None
         adapter = adapter_for(plan.filesystem)
         repair_tool, repair_args = adapter.repair_invocation(
             plan.target.canonical_path,
@@ -183,7 +208,7 @@ class FilesystemBroker:
                 "filesystem_uuid": plan.target.filesystem_uuid,
                 "partuuid": plan.target.partuuid,
                 "filesystem": plan.filesystem.value,
-                "checkpoint_id": plan.protection_checkpoint.id,
+                "checkpoint_id": checkpoint.id,
                 "operator_uid": grant.operator_uid,
                 "tool": repair_tool,
                 "safe_arguments": list(repair_args),
@@ -243,7 +268,9 @@ class FilesystemBroker:
                     "reconciliation_required": True,
                 },
             )
-            raise FilesystemToolError("FILESYSTEM_RECONCILIATION_REQUIRED") from exc
+            raise FilesystemToolError(
+                "FILESYSTEM_RECONCILIATION_REQUIRED"
+            ) from exc
         return outcome.model_dump(mode="json")
 
     @staticmethod
@@ -263,11 +290,11 @@ class FilesystemBroker:
             and grant.plan_fingerprint_sha256 == plan.fingerprint_sha256
         )
 
-    @staticmethod
-    def _validate_plan(plan: FilesystemRepairPlan) -> None:
+    async def _validate_plan(self, plan: FilesystemRepairPlan) -> None:
         checkpoint = plan.protection_checkpoint
         if (
-            not plan.executable
+            not repair_plan_integrity_valid(plan)
+            or not plan.executable
             or checkpoint is None
             or checkpoint.status is not ProtectionCheckpointStatus.READY
             or checkpoint.session_id != plan.session_id
@@ -278,8 +305,13 @@ class FilesystemBroker:
             or plan.expires_at <= datetime.now(UTC)
         ):
             raise FilesystemToolError("FILESYSTEM_PROTECTION_CHECKPOINT_INVALID")
+        durable = await self.checkpoints.get(checkpoint.id)
+        if durable is None or durable != checkpoint:
+            raise FilesystemToolError("FILESYSTEM_PROTECTION_CHECKPOINT_INVALID")
 
-    async def _audit_failure(self, plan: FilesystemRepairPlan, exc: BaseException) -> None:
+    async def _audit_failure(
+        self, plan: FilesystemRepairPlan, exc: BaseException
+    ) -> None:
         code = _safe_code(exc)
         try:
             await self.audit.append(
