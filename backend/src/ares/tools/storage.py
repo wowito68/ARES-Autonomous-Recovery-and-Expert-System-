@@ -357,8 +357,17 @@ class StorageToolSuite:
                 event_bus, correlation_id, "tool.execution.completed", tool, state.reason
             )
             return state, None
-        result_reason: str | None = None if result.exit_code == 0 else "command_failed"
-        await _tool_event(event_bus, correlation_id, "tool.execution.completed", tool, result_reason)
+        if result.exit_code == 0:
+            result_reason = None
+        else:
+            result_reason = "command_failed"
+        await _tool_event(
+            event_bus,
+            correlation_id,
+            "tool.execution.completed",
+            tool,
+            result_reason,
+        )
         return state, result
 
     def _read_boot_inventory(self) -> tuple[BlockDeviceProbe, ...]:
