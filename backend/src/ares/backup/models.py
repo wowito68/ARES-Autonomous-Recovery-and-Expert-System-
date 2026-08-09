@@ -209,6 +209,7 @@ class AuthorizationGrant(BaseModel):
     id: str
     challenge_id: str
     plan_id: str
+    session_id: str = Field(min_length=8, max_length=128)
     plan_fingerprint_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     expires_at: datetime
 
