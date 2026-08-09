@@ -57,6 +57,46 @@ class AresEvent(BaseModel):
     severity: EventSeverity | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
 
+    def __init__(
+        self,
+        *,
+        source: str,
+        correlation_id: str,
+        event_id: str | None = None,
+        id: str | None = None,
+        event_type: str | None = None,
+        name: str | None = None,
+        session_id: str | None = None,
+        timestamp: datetime | None = None,
+        occurred_at: datetime | None = None,
+        severity: EventSeverity | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        """Accept canonical and legacy envelope names during the v2 migration."""
+
+        values: dict[str, Any] = {
+            "source": source,
+            "correlation_id": correlation_id,
+            "payload": payload or {},
+        }
+        if event_id is not None:
+            values["event_id"] = event_id
+        elif id is not None:
+            values["id"] = id
+        if event_type is not None:
+            values["event_type"] = event_type
+        elif name is not None:
+            values["name"] = name
+        if session_id is not None:
+            values["session_id"] = session_id
+        if timestamp is not None:
+            values["timestamp"] = timestamp
+        elif occurred_at is not None:
+            values["occurred_at"] = occurred_at
+        if severity is not None:
+            values["severity"] = severity
+        super().__init__(**values)
+
     @model_validator(mode="before")
     @classmethod
     def default_session_to_correlation(cls, value: Any) -> Any:
@@ -67,21 +107,18 @@ class AresEvent(BaseModel):
         return value
 
     @computed_field
-    @property
     def id(self) -> str:
         """Legacy serialized alias for ``event_id``."""
 
         return self.event_id
 
     @computed_field
-    @property
     def name(self) -> str:
         """Legacy serialized alias for ``event_type``."""
 
         return self.event_type
 
     @computed_field
-    @property
     def occurred_at(self) -> datetime:
         """Legacy serialized alias for ``timestamp``."""
 
