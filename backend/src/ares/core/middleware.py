@@ -33,15 +33,11 @@ class RequestContextMiddleware:
         headers = Headers(scope=scope)
         request_candidate = headers.get("x-request-id", "")
         request_id = (
-            request_candidate
-            if _IDENTIFIER_PATTERN.fullmatch(request_candidate)
-            else uuid4().hex
+            request_candidate if _IDENTIFIER_PATTERN.fullmatch(request_candidate) else uuid4().hex
         )
         session_candidate = headers.get("x-ares-session-id", "")
         session_id = (
-            session_candidate
-            if _IDENTIFIER_PATTERN.fullmatch(session_candidate)
-            else request_id
+            session_candidate if _IDENTIFIER_PATTERN.fullmatch(session_candidate) else request_id
         )
         state = scope.setdefault("state", {})
         mutable_state = _as_mutable_mapping(state)

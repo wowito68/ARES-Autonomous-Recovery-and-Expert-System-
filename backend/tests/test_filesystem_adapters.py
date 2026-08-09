@@ -66,10 +66,14 @@ def test_xfs_adapter_never_uses_log_zeroing() -> None:
     assert repair_args == ("/dev/test",)
     assert image_args == ("-f", "/tmp/xfs.img")
     assert "-L" not in check_args + repair_args + image_args
-    assert adapter.parse_check(_result("xfs_repair", 1), FilesystemType.XFS).health is FilesystemHealth.INCONSISTENT
-    assert "xfs_dirty_log_requires_safe_replay" in adapter.parse_check(
-        _result("xfs_repair", 2), FilesystemType.XFS
-    ).problems
+    assert (
+        adapter.parse_check(_result("xfs_repair", 1), FilesystemType.XFS).health
+        is FilesystemHealth.INCONSISTENT
+    )
+    assert (
+        "xfs_dirty_log_requires_safe_replay"
+        in adapter.parse_check(_result("xfs_repair", 2), FilesystemType.XFS).problems
+    )
 
 
 def test_btrfs_adapter_is_inspection_only() -> None:

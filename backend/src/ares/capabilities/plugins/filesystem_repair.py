@@ -250,9 +250,7 @@ class FilesystemRepairPlugin:
     )
 
     def __init__(self, store: FilesystemRepairStore, executor: FilesystemExecutor) -> None:
-        self._capabilities: tuple[Capability, ...] = (
-            FilesystemRepairCapability(store, executor),
-        )
+        self._capabilities: tuple[Capability, ...] = (FilesystemRepairCapability(store, executor),)
 
     def capabilities(self) -> tuple[Capability, ...]:
         return self._capabilities

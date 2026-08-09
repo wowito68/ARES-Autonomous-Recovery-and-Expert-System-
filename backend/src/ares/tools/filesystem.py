@@ -97,17 +97,13 @@ class MountSafetyChecker:
             active_processes=active,
             unsupported_mount_options=unsupported,
             safe_to_unmount=mounted and not reasons,
-            safe_to_remount=(
-                mounted and not unsupported and len(mounts) == 1 and not bind
-            ),
+            safe_to_remount=(mounted and not unsupported and len(mounts) == 1 and not bind),
             reasons=tuple(reasons),
         )
 
     def _mounts(self, identity: DeviceIdentity) -> tuple[MountRecord, ...]:
         try:
-            lines = self.mountinfo_path.read_text(
-                encoding="utf-8", errors="replace"
-            ).splitlines()
+            lines = self.mountinfo_path.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
             return ()
         records: list[MountRecord] = []
@@ -142,9 +138,7 @@ class MountSafetyChecker:
         roots = tuple(Path(item.mount_point) for item in mounts)
         own = {item.mount_point for item in mounts}
         try:
-            lines = self.mountinfo_path.read_text(
-                encoding="utf-8", errors="replace"
-            ).splitlines()
+            lines = self.mountinfo_path.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
             return ()
         nested: set[str] = set()
@@ -162,9 +156,7 @@ class MountSafetyChecker:
 
     def _is_swap(self, identity: DeviceIdentity) -> bool:
         try:
-            lines = self.swaps_path.read_text(
-                encoding="utf-8", errors="replace"
-            ).splitlines()[1:]
+            lines = self.swaps_path.read_text(encoding="utf-8", errors="replace").splitlines()[1:]
         except OSError:
             return False
         for line in lines:
@@ -312,9 +304,7 @@ class FilesystemToolSuite:
             "size_bytes": size,
         }
         fingerprint = hashlib.sha256(
-            json.dumps(
-                identity_body, sort_keys=True, separators=(",", ":")
-            ).encode("utf-8")
+            json.dumps(identity_body, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
         return DeviceIdentity(
             requested_path=requested,
@@ -348,7 +338,12 @@ class FilesystemToolSuite:
         return adapter.parse_check(result, filesystem)
 
     async def revalidate(self, expected: DeviceIdentity) -> DeviceIdentity:
-        current = await self.identify(expected.requested_path)
+        try:
+            current = await self.identify(expected.requested_path)
+        except FilesystemToolError as exc:
+            if exc.code == "FILESYSTEM_TARGET_NOT_FOUND":
+                raise FilesystemToolError("FILESYSTEM_DEVICE_DISAPPEARED") from exc
+            raise
         if current.fingerprint_sha256 != expected.fingerprint_sha256:
             raise FilesystemToolError("FILESYSTEM_DEVICE_IDENTITY_CHANGED")
         return current
@@ -462,9 +457,7 @@ class FilesystemToolSuite:
         if not self.runner.inspect("blkid").available:
             return {}
         try:
-            result = await self.runner.run(
-                "blkid", ("-o", "export", target), timeout_seconds=10
-            )
+            result = await self.runner.run("blkid", ("-o", "export", target), timeout_seconds=10)
         except (FileNotFoundError, TimeoutError):
             return {}
         if result.exit_code not in {0, 2}:
@@ -518,9 +511,7 @@ class FilesystemToolSuite:
         if len(plan.mount.mounts) != 1:
             return False
         record = plan.mount.mounts[0]
-        options = tuple(
-            option for option in record.options if option in _SAFE_MOUNT_OPTIONS
-        )
+        options = tuple(option for option in record.options if option in _SAFE_MOUNT_OPTIONS)
         if options:
             args = (
                 "-t",

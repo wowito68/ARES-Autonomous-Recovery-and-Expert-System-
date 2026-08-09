@@ -55,10 +55,7 @@ class ValidateFilesystemRepairAction:
             raise ActionError("FILESYSTEM_REPAIR_SESSION_MISMATCH")
         if request.protected_resource_id != plan.protected_resource_id:
             raise ActionError("FILESYSTEM_PROTECTION_RESOURCE_MISMATCH")
-        if (
-            request.protected_resource_fingerprint_sha256
-            != plan.target.fingerprint_sha256
-        ):
+        if request.protected_resource_fingerprint_sha256 != plan.target.fingerprint_sha256:
             raise ActionError("FILESYSTEM_PROTECTION_RESOURCE_MISMATCH")
         try:
             inspection = await self.executor.inspect(plan.target.requested_path)
@@ -201,7 +198,9 @@ class ExecuteFilesystemRepairAction:
         try:
             outcome = await self.executor.execute(plan, grant, on_stage=stage)
         except asyncio.CancelledError:
-            await self._terminal(plan.repair_id, RepairExecutionStatus.CANCELLED, "FILESYSTEM_REPAIR_CANCELLED")
+            await self._terminal(
+                plan.repair_id, RepairExecutionStatus.CANCELLED, "FILESYSTEM_REPAIR_CANCELLED"
+            )
             await _event(
                 context,
                 "repair.cancelled",
@@ -229,9 +228,7 @@ class ExecuteFilesystemRepairAction:
     async def compensate(self, output: dict[str, Any], context: ActionContext) -> None:
         del output, context
 
-    async def _terminal(
-        self, repair_id: str, status: RepairExecutionStatus, code: str
-    ) -> None:
+    async def _terminal(self, repair_id: str, status: RepairExecutionStatus, code: str) -> None:
         record = await self.store.get_repair(repair_id)
         if record is None:
             return
@@ -298,9 +295,7 @@ class VerifyFilesystemRepairAction:
                 "error_code": error_code,
             }
         )
-        record = record.model_copy(
-            update={"execution": execution, "verification": verification}
-        )
+        record = record.model_copy(update={"execution": execution, "verification": verification})
         await self.store.put_repair(record)
         await _event(
             context,
@@ -356,7 +351,9 @@ class ProjectFilesystemRepairGraphAction:
             GraphNode(
                 id=before_id,
                 kind=GraphKind.FILESYSTEM_STATUS,
-                attributes={"status": verification.before.health.value if verification.before else "UNKNOWN"},
+                attributes={
+                    "status": verification.before.health.value if verification.before else "UNKNOWN"
+                },
             ),
             GraphNode(
                 id=repair_id,
@@ -375,7 +372,9 @@ class ProjectFilesystemRepairGraphAction:
             GraphNode(
                 id=after_id,
                 kind=GraphKind.FILESYSTEM_STATUS,
-                attributes={"status": verification.after.health.value if verification.after else "UNKNOWN"},
+                attributes={
+                    "status": verification.after.health.value if verification.after else "UNKNOWN"
+                },
             ),
         ]
         edges = [
@@ -396,9 +395,7 @@ class ProjectFilesystemRepairGraphAction:
                     },
                 )
             )
-            edges.append(
-                GraphEdge(source=repair_id, relation="protected_by", target=checkpoint_id)
-            )
+            edges.append(GraphEdge(source=repair_id, relation="protected_by", target=checkpoint_id))
         snapshot = await context.graph.apply(tuple(nodes), tuple(edges))
         result = FilesystemRepairResult(
             repair=record,
@@ -423,15 +420,32 @@ def _verification_status(
     if outcome.after.health is not FilesystemHealth.HEALTHY:
         if outcome.after.health is FilesystemHealth.UNKNOWN:
             return RepairVerificationStatus.UNKNOWN, "La verificación posterior no fue concluyente."
-        return RepairVerificationStatus.FAILED, "La comprobación posterior aún detecta inconsistencias."
+        return (
+            RepairVerificationStatus.FAILED,
+            "La comprobación posterior aún detecta inconsistencias.",
+        )
+    if any(
+        item in outcome.limitations
+        for item in ("repair_tool_failed", "repair_tool_reported_unresolved_errors")
+    ):
+        return (
+            RepairVerificationStatus.PARTIAL,
+            "La herramienta de reparación reportó errores no resueltos; no se declara éxito total.",
+        )
     if plan.filesystem is FilesystemType.NTFS and outcome.repair_tool != "none":
         return (
             RepairVerificationStatus.PARTIAL,
             "ntfsfix terminó y el check Linux no detecta errores comunes, pero Windows CHKDSK sigue siendo necesario.",
         )
     if plan.mount.mounted and outcome.remounted is not True:
-        return RepairVerificationStatus.PARTIAL, "El filesystem verificó sano pero no pudo remontarse."
-    return RepairVerificationStatus.SUCCESS, "La comprobación posterior demuestra consistencia según el adapter."
+        return (
+            RepairVerificationStatus.PARTIAL,
+            "El filesystem verificó sano pero no pudo remontarse.",
+        )
+    return (
+        RepairVerificationStatus.SUCCESS,
+        "La comprobación posterior demuestra consistencia según el adapter.",
+    )
 
 
 async def _event(

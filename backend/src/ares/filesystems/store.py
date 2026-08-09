@@ -135,7 +135,9 @@ class FilesystemRepairStore:
                     "error_code": "FILESYSTEM_REPAIR_INTERRUPTED",
                 }
             )
-            self._write(path, record.model_copy(update={"execution": execution}).model_dump(mode="json"))
+            self._write(
+                path, record.model_copy(update={"execution": execution}).model_dump(mode="json")
+            )
 
 
 def _safe_id(value: str) -> str:

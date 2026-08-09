@@ -96,9 +96,7 @@ class UnixAuditLedgerClient:
             "session_id": session_id,
             "payload": payload,
         }
-        encoded = json.dumps(
-            request, ensure_ascii=False, separators=(",", ":")
-        ).encode("utf-8")
+        encoded = json.dumps(request, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         if len(encoded) > _MAX_AUDIT_MESSAGE_BYTES:
             raise AuditLedgerError("audit message too large")
         try:
@@ -109,9 +107,7 @@ class UnixAuditLedgerClient:
             try:
                 writer.write(encoded + b"\n")
                 await writer.drain()
-                line = await asyncio.wait_for(
-                    reader.readline(), self.timeout_seconds
-                )
+                line = await asyncio.wait_for(reader.readline(), self.timeout_seconds)
             finally:
                 writer.close()
                 await writer.wait_closed()
@@ -125,9 +121,7 @@ class UnixAuditLedgerClient:
                 raise ValueError
             return AuditReceipt.model_validate(response.get("receipt"))
         except (ValueError, TypeError) as exc:
-            raise AuditLedgerError(
-                "audit writer returned an invalid acknowledgement"
-            ) from exc
+            raise AuditLedgerError("audit writer returned an invalid acknowledgement") from exc
 
 
 class AuditWriter:
@@ -153,10 +147,7 @@ class AuditWriter:
             self._key = os.urandom(32)
             descriptor = os.open(
                 self.key_path,
-                os.O_WRONLY
-                | os.O_CREAT
-                | os.O_EXCL
-                | getattr(os, "O_CLOEXEC", 0),
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0),
                 0o600,
             )
             try:
@@ -264,10 +255,7 @@ class AuditWriter:
                 if not hmac.compare_digest(mac, expected):
                     raise OSError("audit ledger MAC invalid")
                 current_sequence = record.get("sequence")
-                if (
-                    not isinstance(current_sequence, int)
-                    or current_sequence != sequence + 1
-                ):
+                if not isinstance(current_sequence, int) or current_sequence != sequence + 1:
                     raise OSError("audit ledger sequence invalid")
                 sequence = current_sequence
                 previous = mac
@@ -283,9 +271,7 @@ async def serve_audit_writer(
     writer = AuditWriter(directory)
     writer.prepare()
 
-    async def handle(
-        reader: asyncio.StreamReader, stream: asyncio.StreamWriter
-    ) -> None:
+    async def handle(reader: asyncio.StreamReader, stream: asyncio.StreamWriter) -> None:
         try:
             line = await asyncio.wait_for(reader.readline(), 3.0)
             if not line or len(line) > _MAX_AUDIT_MESSAGE_BYTES:
@@ -321,9 +307,7 @@ def _peer_uid(stream: asyncio.StreamWriter) -> int:
     return uid
 
 
-async def _unix_server(
-    handler: UnixHandler, socket_path: Path
-) -> asyncio.AbstractServer:
+async def _unix_server(handler: UnixHandler, socket_path: Path) -> asyncio.AbstractServer:
     listen_fds = int(os.environ.get("LISTEN_FDS", "0") or "0")
     listen_pid = int(os.environ.get("LISTEN_PID", "0") or "0")
     if listen_fds >= 1 and listen_pid == os.getpid():
@@ -343,12 +327,7 @@ def _prepare_socket_path(socket_path: Path) -> None:
 
 
 def _bounded_string(value: object, maximum: int) -> str | None:
-    if (
-        not isinstance(value, str)
-        or not value
-        or len(value) > maximum
-        or "\x00" in value
-    ):
+    if not isinstance(value, str) or not value or len(value) > maximum or "\x00" in value:
         return None
     return value
 

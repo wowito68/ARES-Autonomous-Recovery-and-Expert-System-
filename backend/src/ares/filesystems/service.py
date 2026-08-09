@@ -144,17 +144,13 @@ class FilesystemRepairService:
                 limitations.append(exc.code)
         else:
             limitations.append("verified_full_filesystem_backup_required")
-        missing_tools = tuple(
-            item.tool for item in inspection.required_tools if not item.available
-        )
+        missing_tools = tuple(item.tool for item in inspection.required_tools if not item.available)
         if missing_tools:
             limitations.append("required_tools_unavailable:" + ",".join(missing_tools))
         if inspection.mount.mounted and (
             not inspection.mount.safe_to_unmount or not inspection.mount.safe_to_remount
         ):
-            limitations.append(
-                "mounted_filesystem_cannot_be_safely_unmounted_and_restored"
-            )
+            limitations.append("mounted_filesystem_cannot_be_safely_unmounted_and_restored")
         if not inspection.writable:
             limitations.append("target_not_writable")
         if not inspection.repair_supported:
@@ -169,15 +165,9 @@ class FilesystemRepairService:
             and not missing_tools
             and (
                 not inspection.mount.mounted
-                or (
-                    inspection.mount.safe_to_unmount
-                    and inspection.mount.safe_to_remount
-                )
+                or (inspection.mount.safe_to_unmount and inspection.mount.safe_to_remount)
             )
-            and not (
-                inspection.check is not None
-                and inspection.health is FilesystemHealth.HEALTHY
-            )
+            and not (inspection.check is not None and inspection.health is FilesystemHealth.HEALTHY)
         )
         problems = (
             inspection.check.problems
@@ -196,8 +186,7 @@ class FilesystemRepairService:
             RepairAction(
                 id="filesystem.revalidate-identity",
                 description=(
-                    "Revalidar identidad estable del dispositivo inmediatamente antes de "
-                    "escribir."
+                    "Revalidar identidad estable del dispositivo inmediatamente antes de escribir."
                 ),
                 mutates_target=False,
             )
@@ -412,9 +401,7 @@ class FilesystemRepairService:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _run(
-        self, plan: FilesystemRepairPlan, *, session_id: str, created_by: str
-    ) -> None:
+    async def _run(self, plan: FilesystemRepairPlan, *, session_id: str, created_by: str) -> None:
         checkpoint = plan.protection_checkpoint
         assert checkpoint is not None
         payload = FilesystemRepairInput(
@@ -448,9 +435,7 @@ class FilesystemRepairService:
                         "error_code": "FILESYSTEM_REPAIR_CANCELLED",
                     }
                 )
-                await self.store.put_repair(
-                    record.model_copy(update={"execution": execution})
-                )
+                await self.store.put_repair(record.model_copy(update={"execution": execution}))
         except Exception:
             await self._mark_failed(plan.repair_id, "FILESYSTEM_REPAIR_FAILED")
         finally:

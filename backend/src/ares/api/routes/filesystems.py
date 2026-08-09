@@ -33,9 +33,7 @@ _PROBLEM_SCHEMA = {
     responses={404: _PROBLEM_SCHEMA, 409: _PROBLEM_SCHEMA, 503: _PROBLEM_SCHEMA},
     summary="Inspect exact filesystem identity, mount safety and health without modifying it",
 )
-async def inspect(
-    payload: FilesystemInspectRequest, request: Request
-) -> FilesystemInspection:
+async def inspect(payload: FilesystemInspectRequest, request: Request) -> FilesystemInspection:
     try:
         return await _service(request).inspect(payload, session_id=_session(request))
     except FilesystemServiceError as exc:
@@ -48,9 +46,7 @@ async def inspect(
     responses={404: _PROBLEM_SCHEMA, 409: _PROBLEM_SCHEMA, 503: _PROBLEM_SCHEMA},
     summary="Generate a structured repair plan and bind a verified protection checkpoint",
 )
-async def plan(
-    payload: FilesystemRepairPlanRequest, request: Request
-) -> FilesystemRepairPlan:
+async def plan(payload: FilesystemRepairPlanRequest, request: Request) -> FilesystemRepairPlan:
     try:
         return await _service(request).plan(payload, session_id=_session(request))
     except FilesystemServiceError as exc:
@@ -64,9 +60,7 @@ async def plan(
     responses={404: _PROBLEM_SCHEMA, 409: _PROBLEM_SCHEMA, 503: _PROBLEM_SCHEMA},
     summary="Request independent authorization and start an exact filesystem repair plan",
 )
-async def repair(
-    payload: FilesystemRepairStartRequest, request: Request
-) -> FilesystemRepairRecord:
+async def repair(payload: FilesystemRepairStartRequest, request: Request) -> FilesystemRepairRecord:
     try:
         return await _service(request).start(
             payload,
@@ -121,7 +115,7 @@ def _service(request: Request) -> FilesystemRepairService:
 
 
 def _session(request: Request) -> str:
-    return str(getattr(request.state, "request_id", "filesystem-session"))
+    return str(getattr(request.state, "session_id", "filesystem-session"))
 
 
 def _problem(exc: FilesystemServiceError) -> AresProblem:

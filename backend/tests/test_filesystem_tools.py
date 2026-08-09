@@ -73,7 +73,9 @@ def _image(tmp_path: Path) -> Path:
     return image
 
 
-def _suite(runner: FakeRunner, *, mount_checker: MountSafetyChecker | None = None) -> FilesystemToolSuite:
+def _suite(
+    runner: FakeRunner, *, mount_checker: MountSafetyChecker | None = None
+) -> FilesystemToolSuite:
     return FilesystemToolSuite(
         runner=runner,
         mount_checker=mount_checker or MountSafetyChecker(scan_processes=False),
@@ -223,7 +225,9 @@ def test_mount_safety_detects_bind_and_unrestorable_options(tmp_path: Path) -> N
     assert report.safe_to_remount is False
 
 
-async def test_tool_unavailable_blocks_check_but_keeps_structured_inspection(tmp_path: Path) -> None:
+async def test_tool_unavailable_blocks_check_but_keeps_structured_inspection(
+    tmp_path: Path,
+) -> None:
     runner = FakeRunner()
     runner.available["e2fsck"] = False
     image = _image(tmp_path)

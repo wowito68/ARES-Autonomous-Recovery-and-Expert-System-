@@ -99,8 +99,7 @@ class CapabilityManager:
         category: CapabilityCategory | None = None,
     ) -> tuple[CapabilityMetadata, ...]:
         return tuple(
-            descriptor.metadata
-            for descriptor in self.descriptors(query=query, category=category)
+            descriptor.metadata for descriptor in self.descriptors(query=query, category=category)
         )
 
     def descriptors(
@@ -161,9 +160,7 @@ class CapabilityManager:
             if (descriptor := self.descriptor(capability_id, version=version)) is not None
         )
 
-    def get(
-        self, capability_id: str, *, version: str | None = None
-    ) -> CapabilityMetadata | None:
+    def get(self, capability_id: str, *, version: str | None = None) -> CapabilityMetadata | None:
         descriptor = self.descriptor(capability_id, version=version)
         return descriptor.metadata if descriptor is not None else None
 
@@ -217,15 +214,11 @@ class CapabilityManager:
         )
         definition = capability.build_workflow(validated)
         self._validate_workflow_contract(capability.metadata, definition)
-        execution = await self.workflow_engine.execute(
-            definition, execution_id=execution_id
-        )
+        execution = await self.workflow_engine.execute(definition, execution_id=execution_id)
         if execution.status is not ExecutionStatus.SUCCEEDED or execution.result is None:
             return execution
         validated_output = capability.output_model.model_validate(execution.result)
-        return execution.model_copy(
-            update={"result": validated_output.model_dump(mode="json")}
-        )
+        return execution.model_copy(update={"result": validated_output.model_dump(mode="json")})
 
     def _register_capability(
         self,
@@ -246,10 +239,7 @@ class CapabilityManager:
             raise ValueError("read-only capabilities must use observe operation class")
         if metadata.requires_authorization and metadata.mode is not CapabilityMode.MUTATING:
             raise ValueError("only mutating capabilities may require authorization")
-        if (
-            metadata.requires_protection_checkpoint
-            and metadata.mode is not CapabilityMode.MUTATING
-        ):
+        if metadata.requires_protection_checkpoint and metadata.mode is not CapabilityMode.MUTATING:
             raise ValueError("only mutating capabilities may require a protection checkpoint")
         self._validate_compatibility(
             metadata.os_compatibility.families,
@@ -294,9 +284,7 @@ class CapabilityManager:
     ) -> None:
         if definition.capability_id != metadata.id:
             raise ValueError("workflow capability id does not match its registration")
-        actual_actions = {
-            step.action.id for stage in definition.stages for step in stage.steps
-        }
+        actual_actions = {step.action.id for stage in definition.stages for step in stage.steps}
         if actual_actions != set(metadata.internal_actions):
             raise ValueError("workflow actions do not match capability metadata")
 
@@ -319,9 +307,7 @@ class CapabilityManager:
         if isinstance(session_id, str) and checkpoint.session_id != session_id:
             raise PermissionError("protection checkpoint belongs to another session")
         resource_id = getattr(payload, "protected_resource_id", None)
-        resource_fingerprint = getattr(
-            payload, "protected_resource_fingerprint_sha256", None
-        )
+        resource_fingerprint = getattr(payload, "protected_resource_fingerprint_sha256", None)
         if isinstance(resource_id, str):
             if resource_id not in checkpoint.protected_resources:
                 raise PermissionError("protection checkpoint protects another resource")

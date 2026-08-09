@@ -30,11 +30,17 @@ class FilesystemAdapter(Protocol):
     @property
     def required_tools(self) -> tuple[str, ...]: ...
 
-    def check_invocation(self, target: str, *, image: bool = False) -> tuple[str, tuple[str, ...]]: ...
+    def check_invocation(
+        self, target: str, *, image: bool = False
+    ) -> tuple[str, tuple[str, ...]]: ...
 
-    def repair_invocation(self, target: str, *, image: bool = False) -> tuple[str, tuple[str, ...]]: ...
+    def repair_invocation(
+        self, target: str, *, image: bool = False
+    ) -> tuple[str, tuple[str, ...]]: ...
 
-    def parse_check(self, result: ProcessResult, filesystem: FilesystemType) -> FilesystemCheckResult: ...
+    def parse_check(
+        self, result: ProcessResult, filesystem: FilesystemType
+    ) -> FilesystemCheckResult: ...
 
     def repair_succeeded(self, result: ProcessResult) -> bool: ...
 
@@ -67,7 +73,9 @@ class ExtFilesystemAdapter:
         del image
         return "e2fsck", ("-f", "-p", target)
 
-    def parse_check(self, result: ProcessResult, filesystem: FilesystemType) -> FilesystemCheckResult:
+    def parse_check(
+        self, result: ProcessResult, filesystem: FilesystemType
+    ) -> FilesystemCheckResult:
         code = result.exit_code
         if code == 0:
             health = FilesystemHealth.HEALTHY
@@ -126,7 +134,9 @@ class XfsFilesystemAdapter:
         args = ("-f", target) if image else (target,)
         return "xfs_repair", args
 
-    def parse_check(self, result: ProcessResult, filesystem: FilesystemType) -> FilesystemCheckResult:
+    def parse_check(
+        self, result: ProcessResult, filesystem: FilesystemType
+    ) -> FilesystemCheckResult:
         if result.exit_code == 0:
             health = FilesystemHealth.HEALTHY
             problems: tuple[str, ...] = ()
@@ -184,8 +194,12 @@ class BtrfsFilesystemAdapter:
         del target, image
         raise PermissionError("FILESYSTEM_REPAIR_UNSUPPORTED_BTRFS")
 
-    def parse_check(self, result: ProcessResult, filesystem: FilesystemType) -> FilesystemCheckResult:
-        health = FilesystemHealth.HEALTHY if result.exit_code == 0 else FilesystemHealth.INCONSISTENT
+    def parse_check(
+        self, result: ProcessResult, filesystem: FilesystemType
+    ) -> FilesystemCheckResult:
+        health = (
+            FilesystemHealth.HEALTHY if result.exit_code == 0 else FilesystemHealth.INCONSISTENT
+        )
         problems = () if result.exit_code == 0 else ("filesystem_structural_errors_detected",)
         return FilesystemCheckResult(
             filesystem=filesystem,
@@ -234,8 +248,12 @@ class NtfsFilesystemAdapter:
         del image
         return "ntfsfix", (target,)
 
-    def parse_check(self, result: ProcessResult, filesystem: FilesystemType) -> FilesystemCheckResult:
-        health = FilesystemHealth.HEALTHY if result.exit_code == 0 else FilesystemHealth.INCONSISTENT
+    def parse_check(
+        self, result: ProcessResult, filesystem: FilesystemType
+    ) -> FilesystemCheckResult:
+        health = (
+            FilesystemHealth.HEALTHY if result.exit_code == 0 else FilesystemHealth.INCONSISTENT
+        )
         problems = () if result.exit_code == 0 else ("ntfs_common_errors_detected",)
         return FilesystemCheckResult(
             filesystem=filesystem,

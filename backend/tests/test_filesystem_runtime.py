@@ -23,7 +23,6 @@ from ares.backup.models import (
 from ares.backup.store import BackupStore
 from ares.filesystems.integrity import repair_plan_fingerprint
 from ares.filesystems.models import (
-    DeviceIdentity,
     FilesystemRepairPlan,
     FilesystemType,
     MountSafetyReport,
@@ -270,9 +269,7 @@ async def test_checkpoint_service_rejects_partial_backup_and_other_device(tmp_pa
     await backup_store.put_verification(verification)
     service = ProtectionCheckpointService(backup_store, checkpoint_store)
 
-    with pytest.raises(
-        ProtectionCheckpointError, match="PROTECTION_BACKUP_NOT_FULL_FILESYSTEM"
-    ):
+    with pytest.raises(ProtectionCheckpointError, match="PROTECTION_BACKUP_NOT_FULL_FILESYSTEM"):
         await service.from_backup(
             backup_id=backup.id,
             resource_id="filesystem:" + "a" * 64,
@@ -290,9 +287,7 @@ async def test_checkpoint_service_rejects_partial_backup_and_other_device(tmp_pa
     await backup_store.put_backup(full_backup)
     await backup_store.put_manifest(full_manifest)
     await backup_store.put_verification(full_verification)
-    with pytest.raises(
-        ProtectionCheckpointError, match="PROTECTION_BACKUP_TARGET_MISMATCH"
-    ):
+    with pytest.raises(ProtectionCheckpointError, match="PROTECTION_BACKUP_TARGET_MISMATCH"):
         await service.from_backup(
             backup_id=full_backup.id,
             resource_id="filesystem:" + "a" * 64,
@@ -317,9 +312,7 @@ async def test_consent_authority_requires_exact_filesystem_phrase_and_operator_u
     )
 
     phrase = challenge["confirmation_phrase"]
-    assert phrase.startswith(
-        "I understand that this operation modifies the filesystem. APPROVE "
-    )
+    assert phrase.startswith("I understand that this operation modifies the filesystem. APPROVE ")
     assert challenge["target_fingerprint"] == plan.target.fingerprint_sha256
     with pytest.raises(ValueError, match="exact confirmation phrase required"):
         await authority.dispatch(
@@ -353,9 +346,7 @@ class ApprovedConsent:
     async def request_filesystem(self, plan: FilesystemRepairPlan) -> dict[str, Any]:
         return {"challenge_id": f"challenge-{plan.id[:8]}"}
 
-    async def wait(
-        self, challenge_id: str, timeout_seconds: float = 600.0
-    ) -> dict[str, Any]:
+    async def wait(self, challenge_id: str, timeout_seconds: float = 600.0) -> dict[str, Any]:
         del timeout_seconds
         return {
             "challenge_id": challenge_id,
@@ -371,9 +362,7 @@ async def test_broker_consumes_one_use_grant_and_audits_exact_plan(tmp_path: Pat
     )
     checkpoint_store = ProtectionCheckpointStore(tmp_path / "checkpoints")
     checkpoint_store.prepare()
-    tools, plan, _ = await _identity_and_plan(
-        tmp_path, checkpoint_store, runner=runner
-    )
+    tools, plan, _ = await _identity_and_plan(tmp_path, checkpoint_store, runner=runner)
     audit = MemoryAuditLedger()
     broker = FilesystemBroker(
         tools,
@@ -405,10 +394,7 @@ async def test_broker_consumes_one_use_grant_and_audits_exact_plan(tmp_path: Pat
 
     assert result["after"]["health"] == "HEALTHY"
     assert any(message.get("type") == "authorization_requested" for message in messages)
-    assert any(
-        message.get("name") == "filesystem.repair-command.started"
-        for message in messages
-    )
+    assert any(message.get("name") == "filesystem.repair-command.started" for message in messages)
     event_names = [record["event_type"] for record in audit.records]
     assert "repair.execution.intent" in event_names
     assert "repair.execution.completed" in event_names
@@ -443,9 +429,7 @@ async def test_broker_rejects_tampered_plan_and_fabricated_checkpoint(tmp_path: 
         del message
 
     tampered = plan.model_copy(update={"limitations": ("tampered",)})
-    with pytest.raises(
-        FilesystemToolError, match="FILESYSTEM_PROTECTION_CHECKPOINT_INVALID"
-    ):
+    with pytest.raises(FilesystemToolError, match="FILESYSTEM_PROTECTION_CHECKPOINT_INVALID"):
         await broker.dispatch(
             {"action": "filesystem.authorize", "plan": tampered.model_dump(mode="json")},
             7,
@@ -459,12 +443,8 @@ async def test_broker_rejects_tampered_plan_and_fabricated_checkpoint(tmp_path: 
             "fingerprint_sha256": "0" * 64,
         }
     )
-    fake = fake_draft.model_copy(
-        update={"fingerprint_sha256": repair_plan_fingerprint(fake_draft)}
-    )
-    with pytest.raises(
-        FilesystemToolError, match="FILESYSTEM_PROTECTION_CHECKPOINT_INVALID"
-    ):
+    fake = fake_draft.model_copy(update={"fingerprint_sha256": repair_plan_fingerprint(fake_draft)})
+    with pytest.raises(FilesystemToolError, match="FILESYSTEM_PROTECTION_CHECKPOINT_INVALID"):
         await broker.dispatch(
             {"action": "filesystem.authorize", "plan": fake.model_dump(mode="json")},
             7,

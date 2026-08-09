@@ -18,7 +18,11 @@ from ares.filesystems.models import (
     RepairAction,
 )
 from ares.knowledge import GraphKind, KnowledgeGraph
-from ares.protection import ProtectionCheckpoint, ProtectionCheckpointStatus, ProtectionCheckpointStore
+from ares.protection import (
+    ProtectionCheckpoint,
+    ProtectionCheckpointStatus,
+    ProtectionCheckpointStore,
+)
 from ares.reasoning import ReasoningEngine, ReasoningRequest, ReasoningStatus
 from ares.tools.storage import ProcessResult, ToolAvailability
 
@@ -177,15 +181,13 @@ async def test_api_executes_exact_protected_image_and_projects_before_after(
         provider_capability_id="backup.create",
         backup_id="api-backup-12345678",
         verification_id="api-verification-12345678",
-        session_id="filesystem-api-request-123",
+        session_id="filesystem-api-session-123",
         evidence_sha256="c" * 64,
     )
-    checkpoint_store = cast(
-        ProtectionCheckpointStore, app.state.protection_checkpoint_store
-    )
+    checkpoint_store = cast(ProtectionCheckpointStore, app.state.protection_checkpoint_store)
     await checkpoint_store.put(checkpoint)
     draft = FilesystemRepairPlan(
-        session_id="filesystem-api-request-123",
+        session_id="filesystem-api-session-123",
         target=identity,
         filesystem=FilesystemType.EXT4,
         mount=MountSafetyReport(

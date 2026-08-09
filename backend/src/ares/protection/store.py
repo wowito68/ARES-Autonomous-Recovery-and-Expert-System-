@@ -66,7 +66,11 @@ class ProtectionCheckpointStore:
     @staticmethod
     def _read(path: Path) -> ProtectionCheckpoint | None:
         try:
-            if path.is_symlink() or not path.is_file() or path.stat().st_size > _MAX_CHECKPOINT_BYTES:
+            if (
+                path.is_symlink()
+                or not path.is_file()
+                or path.stat().st_size > _MAX_CHECKPOINT_BYTES
+            ):
                 return None
             return ProtectionCheckpoint.model_validate_json(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):

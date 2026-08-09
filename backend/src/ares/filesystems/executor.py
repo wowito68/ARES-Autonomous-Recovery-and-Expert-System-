@@ -189,18 +189,14 @@ class UnixBrokerFilesystemExecutor:
         except (OSError, TimeoutError) as exc:
             raise FilesystemExecutorError("FILESYSTEM_BROKER_UNAVAILABLE") from exc
         try:
-            encoded = json.dumps(request, ensure_ascii=False, separators=(",", ":")).encode(
-                "utf-8"
-            )
+            encoded = json.dumps(request, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
             if len(encoded) > _MAX_REQUEST_BYTES:
                 raise FilesystemExecutorError("FILESYSTEM_BROKER_REQUEST_TOO_LARGE")
             writer.write(encoded + b"\n")
             await writer.drain()
             while True:
                 try:
-                    line = await asyncio.wait_for(
-                        reader.readline(), timeout=self.timeout_seconds
-                    )
+                    line = await asyncio.wait_for(reader.readline(), timeout=self.timeout_seconds)
                 except TimeoutError as exc:
                     raise FilesystemExecutorError("FILESYSTEM_BROKER_TIMEOUT") from exc
                 if not line:
@@ -210,9 +206,7 @@ class UnixBrokerFilesystemExecutor:
                 try:
                     message = json.loads(line)
                 except ValueError as exc:
-                    raise FilesystemExecutorError(
-                        "FILESYSTEM_BROKER_RESPONSE_INVALID"
-                    ) from exc
+                    raise FilesystemExecutorError("FILESYSTEM_BROKER_RESPONSE_INVALID") from exc
                 if not isinstance(message, dict):
                     raise FilesystemExecutorError("FILESYSTEM_BROKER_RESPONSE_INVALID")
                 if message.get("type") == "error":

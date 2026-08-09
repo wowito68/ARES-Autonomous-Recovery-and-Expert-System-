@@ -91,9 +91,7 @@ class BackupFilesystemTools:
         policy: BackupPolicy,
     ) -> BackupPlan:
         source_root = self._canonical_existing(source_path, "BACKUP_SOURCE_INVALID")
-        destination_root = self._canonical_existing(
-            destination_path, "BACKUP_DESTINATION_INVALID"
-        )
+        destination_root = self._canonical_existing(destination_path, "BACKUP_DESTINATION_INVALID")
         source_info = self._mount_for(source_root)
         destination_info = self._mount_for(destination_root)
         if source_info is None:
@@ -264,9 +262,7 @@ class BackupFilesystemTools:
                     await asyncio.to_thread(
                         target.parent.mkdir, mode=0o700, parents=True, exist_ok=True
                     )
-                    checksum = await self._copy_regular_file(
-                        item, target, info, chunk_progress
-                    )
+                    checksum = await self._copy_regular_file(item, target, info, chunk_progress)
                     entry = BackupEntry(
                         relative_path=relative.as_posix(),
                         size_bytes=info.st_size,
@@ -291,13 +287,9 @@ class BackupFilesystemTools:
                 )
 
             file_count = sum(item.entry_type is BackupEntryType.FILE for item in entries)
-            directory_count = sum(
-                item.entry_type is BackupEntryType.DIRECTORY for item in entries
-            )
+            directory_count = sum(item.entry_type is BackupEntryType.DIRECTORY for item in entries)
             total_size = sum(
-                item.size_bytes
-                for item in entries
-                if item.entry_type is BackupEntryType.FILE
+                item.size_bytes for item in entries if item.entry_type is BackupEntryType.FILE
             )
             if (
                 file_count != plan.included_file_count
@@ -345,9 +337,7 @@ class BackupFilesystemTools:
             await asyncio.to_thread(_remove_partial, partial)
             raise BackupToolError("BACKUP_IO_FAILED") from exc
 
-    async def verify_backup(
-        self, backup: Backup, manifest: BackupManifest
-    ) -> BackupVerification:
+    async def verify_backup(self, backup: Backup, manifest: BackupManifest) -> BackupVerification:
         root = Path(backup.destination.backup_path)
         if not await asyncio.to_thread(_safe_backup_root, root):
             return _verification_failure(
@@ -393,9 +383,7 @@ class BackupFilesystemTools:
                 missing.append(_path_token(entry.relative_path))
                 continue
             if entry.entry_type is BackupEntryType.DIRECTORY:
-                if not stat.S_ISDIR(target_info.st_mode) or stat.S_ISLNK(
-                    target_info.st_mode
-                ):
+                if not stat.S_ISDIR(target_info.st_mode) or stat.S_ISLNK(target_info.st_mode):
                     mismatches.append(_path_token(entry.relative_path))
                 continue
             if not stat.S_ISREG(target_info.st_mode) or stat.S_ISLNK(target_info.st_mode):
@@ -410,9 +398,7 @@ class BackupFilesystemTools:
             source_item = source_root / relative
             if await asyncio.to_thread(_regular_file_exists_no_symlink, source_item):
                 try:
-                    source_checksum = await asyncio.to_thread(
-                        _hash_file_no_follow, source_item
-                    )
+                    source_checksum = await asyncio.to_thread(_hash_file_no_follow, source_item)
                 except OSError:
                     source_changed.append(_path_token(entry.relative_path))
                 else:
@@ -457,9 +443,7 @@ class BackupFilesystemTools:
                 if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
                     raise BackupToolError("BACKUP_SOURCE_UNSUPPORTED")
                 return _Scan(info.st_size, 1, 0, ())
-            for item, relative, excluded_reason in self._walk_source(
-                root, device_id, policy
-            ):
+            for item, relative, excluded_reason in self._walk_source(root, device_id, policy):
                 if excluded_reason is not None:
                     if len(exclusions) < 1024:
                         exclusions.append(
@@ -531,9 +515,7 @@ class BackupFilesystemTools:
         info: os.stat_result,
         on_chunk: ChunkCallback,
     ) -> str:
-        source_flags = (
-            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-        )
+        source_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
         destination_flags = (
             os.O_WRONLY
             | os.O_CREAT
@@ -801,11 +783,7 @@ def _progress(
     bytes_total: int,
     started: float,
 ) -> BackupProgress:
-    percent = (
-        100.0
-        if bytes_total == 0
-        else min(100.0, bytes_done * 100.0 / bytes_total)
-    )
+    percent = 100.0 if bytes_total == 0 else min(100.0, bytes_done * 100.0 / bytes_total)
     speed = _speed(bytes_done, started)
     remaining = max(0, bytes_total - bytes_done)
     eta = remaining / speed if speed is not None and speed > 0 else None

@@ -124,9 +124,7 @@ async def test_api_backup_plan_create_manifest_verification_list_and_graph(
     assert backup["compression_status"] == "none"
 
     manifest_response = await client.get(f"/api/v1/backups/{backup_id}/manifest")
-    verification_response = await client.get(
-        f"/api/v1/backups/{backup_id}/verification"
-    )
+    verification_response = await client.get(f"/api/v1/backups/{backup_id}/verification")
     list_response = await client.get("/api/v1/backups")
     assert manifest_response.status_code == 200
     assert manifest_response.json()["file_count"] == 2
@@ -152,7 +150,9 @@ async def test_api_backup_plan_create_manifest_verification_list_and_graph(
     assert any(record["event_type"] == "backup.planned" for record in audit.records)
 
 
-async def test_api_verify_detects_corruption(client: AsyncClient, app: FastAPI, tmp_path: Path) -> None:
+async def test_api_verify_detects_corruption(
+    client: AsyncClient, app: FastAPI, tmp_path: Path
+) -> None:
     source, destination = _configure_mounts(app, tmp_path)
     (source / "document.txt").write_text("original", encoding="utf-8")
     plan = (
@@ -192,7 +192,10 @@ async def test_backup_api_returns_problem_details_for_missing_resources(
         assert response.headers["content-type"].startswith("application/problem+json")
 
 
-async def test_backup_store_and_service_listing_are_shared(app: FastAPI, tmp_path: Path) -> None:
+async def test_backup_store_and_service_listing_are_shared(
+    client: AsyncClient, app: FastAPI, tmp_path: Path
+) -> None:
+    del client
     source, destination = _configure_mounts(app, tmp_path)
     (source / "file.txt").write_text("data", encoding="utf-8")
     service = cast(BackupService, app.state.backup_service)

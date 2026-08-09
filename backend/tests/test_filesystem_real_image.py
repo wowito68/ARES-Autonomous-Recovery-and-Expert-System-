@@ -4,7 +4,6 @@ import asyncio
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -89,9 +88,7 @@ def test_real_ext4_image_is_detected_repaired_and_verified(tmp_path: Path) -> No
             executable=True,
             fingerprint_sha256="0" * 64,
         )
-        plan = draft.model_copy(
-            update={"fingerprint_sha256": repair_plan_fingerprint(draft)}
-        )
+        plan = draft.model_copy(update={"fingerprint_sha256": repair_plan_fingerprint(draft)})
         challenges: list[str] = []
 
         async def on_challenge(challenge_id: str) -> None:

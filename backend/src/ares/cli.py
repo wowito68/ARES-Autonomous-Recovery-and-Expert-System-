@@ -61,12 +61,8 @@ def build_parser() -> argparse.ArgumentParser:
     verify = backup_commands.add_parser("verify", help="Verify one backup")
     verify.add_argument("backup_id")
 
-    filesystem = commands.add_parser(
-        "filesystem", help="Inspect and safely repair filesystems"
-    )
-    filesystem_commands = filesystem.add_subparsers(
-        dest="filesystem_command", required=True
-    )
+    filesystem = commands.add_parser("filesystem", help="Inspect and safely repair filesystems")
+    filesystem_commands = filesystem.add_subparsers(dest="filesystem_command", required=True)
     inspect = filesystem_commands.add_parser(
         "inspect", help="Inspect one exact device without modifying it"
     )
@@ -217,9 +213,7 @@ async def _backup_command(args: argparse.Namespace, application) -> int:
 
 
 async def _filesystem_command(args: argparse.Namespace, application) -> int:
-    service = cast(
-        FilesystemRepairService, application.state.filesystem_repair_service
-    )
+    service = cast(FilesystemRepairService, application.state.filesystem_repair_service)
     session_id = f"cli-{uuid4().hex}"
     try:
         if args.filesystem_command == "inspect":
@@ -275,9 +269,7 @@ async def _filesystem_command(args: argparse.Namespace, application) -> int:
             print("Repair request cancelled before authorization.", file=sys.stderr)
             return 4
         accepted = await service.start(
-            FilesystemRepairStartRequest(
-                plan_id=plan.id, request_authorization=True
-            ),
+            FilesystemRepairStartRequest(plan_id=plan.id, request_authorization=True),
             session_id=session_id,
             created_by="local-cli-user",
         )
@@ -309,11 +301,7 @@ async def _filesystem_command(args: argparse.Namespace, application) -> int:
             )
             if record.execution.status in _TERMINAL_REPAIR_STATES:
                 print(record.model_dump_json(indent=2))
-                return (
-                    0
-                    if record.execution.status is RepairExecutionStatus.COMPLETED
-                    else 6
-                )
+                return 0 if record.execution.status is RepairExecutionStatus.COMPLETED else 6
             await asyncio.sleep(0.5)
     except FilesystemServiceError as exc:
         print(f"ARES filesystem operation failed: {exc.code}", file=sys.stderr)

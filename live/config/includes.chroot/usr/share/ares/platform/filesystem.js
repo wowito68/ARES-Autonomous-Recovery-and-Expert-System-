@@ -2,6 +2,7 @@
   "use strict";
 
   const api = "/api/v1/filesystems";
+  const sessionId = `ui-${globalThis.crypto.randomUUID().replaceAll("-", "")}`;
   let currentInspection = null;
   let currentPlan = null;
   let currentRepairId = null;
@@ -92,7 +93,7 @@
 
   async function requestJson(url, options = {}) {
     const response = await fetch(url, {
-      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+      headers: { "Content-Type": "application/json", "X-ARES-Session-ID": sessionId, ...(options.headers || {}) },
       ...options,
     });
     if (!response.ok) {

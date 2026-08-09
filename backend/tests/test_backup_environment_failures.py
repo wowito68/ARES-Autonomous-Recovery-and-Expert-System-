@@ -30,9 +30,7 @@ def _fixture(tmp_path: Path, *, destination_fs: str = "ext4"):
 def test_plan_rejects_incompatible_destination_filesystem(tmp_path: Path) -> None:
     tools, source, destination = _fixture(tmp_path, destination_fs="tmpfs")
 
-    with pytest.raises(
-        BackupToolError, match="BACKUP_DESTINATION_FILESYSTEM_INCOMPATIBLE"
-    ):
+    with pytest.raises(BackupToolError, match="BACKUP_DESTINATION_FILESYSTEM_INCOMPATIBLE"):
         tools.build_plan(str(source), str(destination), BackupPolicy())
 
 

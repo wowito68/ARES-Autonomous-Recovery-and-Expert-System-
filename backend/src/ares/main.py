@@ -11,7 +11,12 @@ from fastapi.staticfiles import StaticFiles
 
 from ares.api.router import api_router
 from ares.audit import MemoryAuditLedger, UnixAuditLedgerClient
-from ares.backup import BackupService, BackupStore, LocalTestBackupExecutor, UnixBrokerBackupExecutor
+from ares.backup import (
+    BackupService,
+    BackupStore,
+    LocalTestBackupExecutor,
+    UnixBrokerBackupExecutor,
+)
 from ares.capabilities import CapabilityManager, discover_plugins
 from ares.capabilities.plugins import BackupPlugin, DiskAnalysisPlugin, FilesystemRepairPlugin
 from ares.config import Environment, Settings, get_settings
@@ -69,9 +74,7 @@ def create_app(
     snapshot_store = StorageSnapshotStore(capability_state_dir / "storage/snapshots")
     diagnostic_store = DiagnosticStore(capability_state_dir / "diagnostics")
     backup_store = BackupStore(capability_state_dir / "backups")
-    checkpoint_store = ProtectionCheckpointStore(
-        capability_state_dir / "protection/checkpoints"
-    )
+    checkpoint_store = ProtectionCheckpointStore(capability_state_dir / "protection/checkpoints")
     filesystem_store = FilesystemRepairStore(capability_state_dir / "filesystems")
     storage_runner = ReadOnlyStorageProcessRunner(SafeProcessRunner())
     storage_tools = StorageToolSuite(
@@ -92,9 +95,7 @@ def create_app(
         backup_executor = UnixBrokerBackupExecutor(resolved_settings.backup_broker_socket)
         audit_ledger = UnixAuditLedgerClient(resolved_settings.audit_socket)
         filesystem_tools = None
-        filesystem_executor = UnixBrokerFilesystemExecutor(
-            resolved_settings.backup_broker_socket
-        )
+        filesystem_executor = UnixBrokerFilesystemExecutor(resolved_settings.backup_broker_socket)
     workflow_engine = WorkflowEngine(event_bus, knowledge_graph)
     capability_manager = CapabilityManager(
         workflow_engine,
@@ -167,9 +168,7 @@ def create_app(
         docs_url=None,
         redoc_url=None,
         openapi_url=(
-            "/openapi.json"
-            if resolved_settings.environment is not Environment.PRODUCTION
-            else None
+            "/openapi.json" if resolved_settings.environment is not Environment.PRODUCTION else None
         ),
         lifespan=lifespan,
     )

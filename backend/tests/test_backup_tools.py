@@ -24,7 +24,9 @@ def _device_id(path: Path) -> str:
     return f"{os.major(device)}:{os.minor(device)}"
 
 
-def _tools(tmp_path: Path, *, same_filesystem: bool = False) -> tuple[BackupFilesystemTools, Path, Path]:
+def _tools(
+    tmp_path: Path, *, same_filesystem: bool = False
+) -> tuple[BackupFilesystemTools, Path, Path]:
     source = tmp_path / "source"
     destination = tmp_path / "destination"
     source.mkdir()
@@ -163,7 +165,9 @@ def test_plan_rejects_insufficient_space(tmp_path: Path, monkeypatch: pytest.Mon
         tools.build_plan(str(source), str(destination), BackupPolicy())
 
 
-def test_plan_rejects_unwritable_destination(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_plan_rejects_unwritable_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     tools, source, destination = _tools(tmp_path)
     (source / "file.txt").write_text("data", encoding="utf-8")
     original = backup_tools_module.os.access
@@ -246,9 +250,7 @@ async def test_verify_detects_destination_manifest_corruption(tmp_path: Path) ->
         return None
 
     manifest = await tools.create_backup(plan, noop, noop)
-    (Path(plan.destination.backup_path) / ".ares-manifest.json").write_text(
-        "{}", encoding="utf-8"
-    )
+    (Path(plan.destination.backup_path) / ".ares-manifest.json").write_text("{}", encoding="utf-8")
 
     verification = await tools.verify_backup(_backup(plan), manifest)
 

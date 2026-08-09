@@ -83,9 +83,7 @@ class ChatResponse(BaseModel):
     responses={
         503: {
             "description": "The local AI runtime or configured model is unavailable",
-            "content": {
-                "application/problem+json": {"schema": ProblemDetail.model_json_schema()}
-            },
+            "content": {"application/problem+json": {"schema": ProblemDetail.model_json_schema()}},
         }
     },
     summary="Ask the local read-only assistant",

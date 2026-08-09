@@ -271,15 +271,11 @@ async def serve_tool_broker(
     checkpoint_store = ProtectionCheckpointStore(
         Path("/var/lib/ares/capabilities/protection/checkpoints")
     )
-    filesystem_broker = FilesystemBroker(
-        FilesystemToolSuite(), audit, consent, checkpoint_store
-    )
+    filesystem_broker = FilesystemBroker(FilesystemToolSuite(), audit, consent, checkpoint_store)
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         async def send(message: dict[str, Any]) -> None:
-            encoded = json.dumps(message, ensure_ascii=False, separators=(",", ":")).encode(
-                "utf-8"
-            )
+            encoded = json.dumps(message, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
             if len(encoded) > _MAX_RESPONSE_BYTES:
                 raise ValueError("broker response too large")
             writer.write(encoded + b"\n")
