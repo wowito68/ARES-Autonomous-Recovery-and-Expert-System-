@@ -1,4 +1,4 @@
-"""Independent local consent authority for exact one-use backup plans."""
+"""Independent local consent authority for exact one-use mutation plans."""
 
 from __future__ import annotations
 
@@ -16,46 +16,42 @@ from uuid import uuid4
 
 from ares.audit.ledger import AuditLedger, AuditLedgerError, UnixAuditLedgerClient
 from ares.backup.models import BackupPlan
+from ares.filesystems.models import FilesystemRepairPlan
 
 _MAX_MESSAGE_BYTES = 512_000
+_FILESYSTEM_CONFIRMATION = "I understand that this operation modifies the filesystem."
 
 
 @dataclass(slots=True)
 class _Challenge:
     id: str
+    kind: str
     plan_id: str
     fingerprint: str
     session_id: str
-    source: str
-    destination: str
-    estimated_bytes: int
-    required_bytes: int
-    available_bytes: int
-    file_count: int
-    exclusions: tuple[dict[str, str], ...]
+    correlation_id: str
+    capability_id: str
+    risk: str
+    confirmation_phrase: str
+    public_payload: dict[str, Any]
     expires_at: datetime
     decision: str = "pending"
+    operator_uid: int | None = None
     event: asyncio.Event = field(default_factory=asyncio.Event)
 
     def public(self) -> dict[str, Any]:
         return {
             "challenge_id": self.id,
+            "kind": self.kind,
+            "capability_id": self.capability_id,
             "plan_id": self.plan_id,
             "plan_fingerprint_sha256": self.fingerprint,
-            "source": self.source,
-            "destination": self.destination,
-            "estimated_bytes": self.estimated_bytes,
-            "required_bytes": self.required_bytes,
-            "available_bytes": self.available_bytes,
-            "file_count": self.file_count,
-            "exclusions": list(self.exclusions),
-            "excluded_count": len(self.exclusions),
-            "risk": "medium",
-            "overwrite": False,
-            "verification": "sha256",
+            "risk": self.risk,
             "expires_at": self.expires_at.isoformat(),
             "decision": self.decision,
-            "confirmation_phrase": f"APPROVE {self.fingerprint[:12]}",
+            "operator_uid": self.operator_uid,
+            "confirmation_phrase": self.confirmation_phrase,
+            **self.public_payload,
         }
 
 
@@ -77,7 +73,10 @@ class ConsentAuthority:
         action = request.get("action")
         if action == "create":
             self._require_peer(peer_uid, self.broker_uid)
-            return await self._create(request)
+            return await self._create_backup(request)
+        if action == "filesystem.create":
+            self._require_peer(peer_uid, self.broker_uid)
+            return await self._create_filesystem(request)
         if action == "wait":
             self._require_peer(peer_uid, self.broker_uid)
             return await self._wait(request)
@@ -92,51 +91,121 @@ class ConsentAuthority:
             return await self._decide(request, "denied", peer_uid)
         raise ValueError("unsupported consent action")
 
-    async def _create(self, request: dict[str, Any]) -> dict[str, Any]:
+    async def _create_backup(self, request: dict[str, Any]) -> dict[str, Any]:
         plan = BackupPlan.model_validate(request.get("plan"))
         session_id = request.get("session_id")
         if not isinstance(session_id, str) or len(session_id) < 8:
             raise ValueError("invalid session")
         challenge = _Challenge(
             id=uuid4().hex,
+            kind="backup",
             plan_id=plan.id,
             fingerprint=plan.fingerprint_sha256,
             session_id=session_id,
-            source=plan.source.path,
-            destination=plan.destination.backup_path,
-            estimated_bytes=plan.source.estimated_size_bytes,
-            required_bytes=plan.required_bytes,
-            available_bytes=plan.destination.available_bytes,
-            file_count=plan.included_file_count,
-            exclusions=tuple(
-                {
-                    "relative_path": item.relative_path,
-                    "reason": item.reason,
-                }
-                for item in plan.exclusions
-            ),
+            correlation_id=plan.backup_id,
+            capability_id="backup.create",
+            risk="medium",
+            confirmation_phrase=f"APPROVE {plan.fingerprint_sha256[:12]}",
+            public_payload={
+                "source": plan.source.path,
+                "destination": plan.destination.backup_path,
+                "estimated_bytes": plan.source.estimated_size_bytes,
+                "required_bytes": plan.required_bytes,
+                "available_bytes": plan.destination.available_bytes,
+                "file_count": plan.included_file_count,
+                "exclusions": [
+                    {
+                        "relative_path": item.relative_path,
+                        "reason": item.reason,
+                    }
+                    for item in plan.exclusions
+                ],
+                "excluded_count": len(plan.exclusions),
+                "overwrite": False,
+                "verification": "sha256",
+            },
             expires_at=min(plan.expires_at, datetime.now(UTC) + timedelta(minutes=10)),
         )
-        async with self._lock:
-            self._challenges[challenge.id] = challenge
-        await self.audit.append(
-            event_type="backup.authorization.requested",
-            source="ares-consent-agent",
-            correlation_id=plan.backup_id,
-            session_id=session_id,
-            payload={
-                "challenge_id": challenge.id,
-                "plan_id": plan.id,
-                "plan_fingerprint": plan.fingerprint_sha256,
+        await self._store_and_audit_requested(
+            challenge,
+            {
                 "estimated_bytes": plan.source.estimated_size_bytes,
                 "required_bytes": plan.required_bytes,
                 "available_bytes": plan.destination.available_bytes,
                 "file_count": plan.included_file_count,
                 "excluded_count": len(plan.exclusions),
-                "risk": "medium",
             },
         )
         return challenge.public()
+
+    async def _create_filesystem(self, request: dict[str, Any]) -> dict[str, Any]:
+        plan = FilesystemRepairPlan.model_validate(request.get("plan"))
+        challenge = _Challenge(
+            id=uuid4().hex,
+            kind="filesystem_repair",
+            plan_id=plan.id,
+            fingerprint=plan.fingerprint_sha256,
+            session_id=plan.session_id,
+            correlation_id=plan.repair_id,
+            capability_id=plan.capability_id,
+            risk="high",
+            confirmation_phrase=(
+                f"{_FILESYSTEM_CONFIRMATION} APPROVE {plan.fingerprint_sha256[:12]}"
+            ),
+            public_payload={
+                "repair_id": plan.repair_id,
+                "target": plan.target.canonical_path,
+                "target_fingerprint": plan.target.fingerprint_sha256,
+                "major_minor": plan.target.major_minor,
+                "filesystem_uuid": plan.target.filesystem_uuid,
+                "partuuid": plan.target.partuuid,
+                "filesystem": plan.filesystem.value,
+                "mounted": plan.mount.mounted,
+                "checkpoint_id": (
+                    plan.protection_checkpoint.id
+                    if plan.protection_checkpoint is not None
+                    else None
+                ),
+                "repair_actions": [item.id for item in plan.repair_actions],
+                "limitations": list(plan.limitations),
+            },
+            expires_at=min(plan.expires_at, datetime.now(UTC) + timedelta(minutes=10)),
+        )
+        await self._store_and_audit_requested(
+            challenge,
+            {
+                "repair_id": plan.repair_id,
+                "target_fingerprint": plan.target.fingerprint_sha256,
+                "major_minor": plan.target.major_minor,
+                "filesystem": plan.filesystem.value,
+                "checkpoint_id": (
+                    plan.protection_checkpoint.id
+                    if plan.protection_checkpoint is not None
+                    else None
+                ),
+            },
+        )
+        return challenge.public()
+
+    async def _store_and_audit_requested(
+        self, challenge: _Challenge, details: dict[str, Any]
+    ) -> None:
+        async with self._lock:
+            self._challenges[challenge.id] = challenge
+        await self.audit.append(
+            event_type=f"{_event_prefix(challenge)}.authorization.requested",
+            source="ares-consent-agent",
+            correlation_id=challenge.correlation_id,
+            session_id=challenge.session_id,
+            payload={
+                "challenge_id": challenge.id,
+                "capability_id": challenge.capability_id,
+                "plan_id": challenge.plan_id,
+                "plan_fingerprint": challenge.fingerprint,
+                "risk": challenge.risk,
+                **details,
+            },
+        )
 
     async def _wait(self, request: dict[str, Any]) -> dict[str, Any]:
         challenge = await self._lookup(request)
@@ -165,21 +234,21 @@ class ConsentAuthority:
         if challenge.decision != "pending" or challenge.expires_at <= datetime.now(UTC):
             raise ValueError("challenge is not pending")
         confirmation = request.get("confirmation")
-        expected = f"APPROVE {challenge.fingerprint[:12]}"
-        if decision == "approved" and confirmation != expected:
+        if decision == "approved" and confirmation != challenge.confirmation_phrase:
             raise ValueError("exact confirmation phrase required")
         try:
             await self.audit.append(
                 event_type=(
-                    "backup.authorization.approved"
+                    f"{_event_prefix(challenge)}.authorization.approved"
                     if decision == "approved"
-                    else "backup.authorization.denied"
+                    else f"{_event_prefix(challenge)}.authorization.denied"
                 ),
                 source="ares-consent-agent",
-                correlation_id=challenge.id,
+                correlation_id=challenge.correlation_id,
                 session_id=challenge.session_id,
                 payload={
                     "challenge_id": challenge.id,
+                    "capability_id": challenge.capability_id,
                     "plan_id": challenge.plan_id,
                     "plan_fingerprint": challenge.fingerprint,
                     "operator_uid": peer_uid,
@@ -188,6 +257,7 @@ class ConsentAuthority:
             )
         except AuditLedgerError as exc:
             raise ValueError("audit unavailable") from exc
+        challenge.operator_uid = peer_uid
         challenge.decision = decision
         challenge.event.set()
         return challenge.public()
@@ -222,6 +292,13 @@ class UnixConsentClient:
                 "plan": plan.model_dump(mode="json"),
                 "session_id": session_id,
             },
+            timeout_seconds=3.0,
+        )
+
+    async def request_filesystem(self, plan: FilesystemRepairPlan) -> dict[str, Any]:
+        return await _request(
+            self.socket_path,
+            {"action": "filesystem.create", "plan": plan.model_dump(mode="json")},
             timeout_seconds=3.0,
         )
 
@@ -361,13 +438,17 @@ def _prepare_socket_path(socket_path: Path) -> None:
         socket_path.unlink()
 
 
+def _event_prefix(challenge: _Challenge) -> str:
+    return "backup" if challenge.kind == "backup" else "repair"
+
+
 def _safe_error(exc: Exception) -> str:
     text = str(exc)
     allowed = {
-        "authorization expired": "BACKUP_AUTHORIZATION_EXPIRED",
-        "challenge not found": "BACKUP_AUTHORIZATION_NOT_FOUND",
-        "challenge is not pending": "BACKUP_AUTHORIZATION_NOT_PENDING",
-        "exact confirmation phrase required": "BACKUP_AUTHORIZATION_CONFIRMATION_INVALID",
+        "authorization expired": "AUTHORIZATION_EXPIRED",
+        "challenge not found": "AUTHORIZATION_NOT_FOUND",
+        "challenge is not pending": "AUTHORIZATION_NOT_PENDING",
+        "exact confirmation phrase required": "AUTHORIZATION_CONFIRMATION_INVALID",
         "audit unavailable": "AUDIT_LEDGER_UNAVAILABLE",
     }
-    return allowed.get(text, "BACKUP_AUTHORIZATION_FAILED")
+    return allowed.get(text, "AUTHORIZATION_FAILED")
