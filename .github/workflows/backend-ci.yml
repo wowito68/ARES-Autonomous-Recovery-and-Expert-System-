@@ -32,16 +32,13 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --frozen --dev
 
-      - name: Report formatting drift
-        continue-on-error: true
+      - name: Enforce formatting
         run: uv run --frozen ruff format --check src tests
 
-      - name: Report lint findings
-        continue-on-error: true
+      - name: Enforce Ruff
         run: uv run --frozen ruff check src tests
 
-      - name: Report type-checking findings
-        continue-on-error: true
+      - name: Enforce strict mypy
         run: uv run --frozen mypy
 
       - name: Build package
@@ -81,8 +78,8 @@ jobs:
           --cov-report=term-missing
           --cov-report=xml:coverage-${{ matrix.python-version }}.xml
 
-  shell-syntax:
-    name: Shell syntax
+  static-syntax:
+    name: Shell and UI syntax
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -110,3 +107,8 @@ jobs:
             esac
           done < <(git ls-files -z)
           echo "Validated ${checked} tracked shell scripts."
+
+      - name: Validate platform JavaScript syntax
+        run: |
+          node --check live/config/includes.chroot/usr/share/ares/platform/app.js
+          node --check live/config/includes.chroot/usr/share/ares/platform/storage.js

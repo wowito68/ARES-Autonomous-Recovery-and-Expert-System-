@@ -11,10 +11,10 @@ from ares.workflows import WorkflowDefinition
 
 
 class Capability(Protocol):
-    """Validate semantic input and build a private workflow.
+    """Validate semantic I/O contracts and build a private workflow.
 
-    Capabilities expose a typed input model to the core. They never execute a
-    command and never accept an action/tool identifier from a client or LLM.
+    Capabilities never execute a command and never accept an action/tool
+    identifier from a client or LLM.
     """
 
     @property
@@ -24,6 +24,10 @@ class Capability(Protocol):
     @property
     def input_model(self) -> type[BaseModel]:
         """Return the Pydantic model used for semantic input validation."""
+
+    @property
+    def output_model(self) -> type[BaseModel]:
+        """Return the Pydantic model used to validate the public result."""
 
     def build_workflow(self, payload: BaseModel) -> WorkflowDefinition:
         """Return a server-owned plan from already validated semantic input."""

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
@@ -54,7 +55,16 @@ class JsonlEventSink:
             self.path.chmod(0o600)
 
     async def append(self, event: AresEvent) -> None:
-        encoded = (event.model_dump_json() + "\n").encode("utf-8")
+        encoded = (
+            json.dumps(
+                event.journal_record(),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+            + "\n"
+        ).encode("utf-8")
         if len(encoded) > _MAX_EVENT_BYTES:
             raise ValueError("event exceeds the durable journal limit")
         async with self._lock:

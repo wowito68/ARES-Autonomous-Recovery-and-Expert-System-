@@ -1,141 +1,88 @@
 # Modelo de seguridad
 
-> Estado: arquitectura objetivo. El slice fundacional solo implementa defaults locales básicos, configuración validada, errores HTTP redactados, logs con campos curados, correlación y readiness de SQLite; identidad, policy, consentimiento independiente por TTY, broker y ledger llegan en fases siguientes.
+> Estado: `storage.disk-analysis@1.1.0` implementa la primera frontera de observación read-only. Identidad humana autoritativa, grants del broker, consentimiento TTY y ledger HMAC siguen siendo arquitectura objetivo y no se consideran implementados.
 
-## 1. Objetivos
+## 1. Objetivo
 
-ARES controla operaciones que pueden destruir datos. El objetivo no es confiar en que el modelo “se comporte”, sino hacer que una salida incorrecta o maliciosa no pueda saltarse controles deterministas.
+ARES debe asumir que el modelo, el navegador, los nombres de dispositivos y la salida de utilidades pueden ser incorrectos o maliciosos. La seguridad no depende de prompts: depende de contratos tipados, separación de privilegios y policy determinista.
 
-Propiedades buscadas:
+Propiedades vigentes para Storage:
 
-- el LLM no tiene credenciales, acceso a dispositivos ni capacidad de ejecutar procesos;
-- una API comprometida no obtiene una shell root;
-- cada operación se limita por identidad, argumentos, modo, rol, riesgo y tiempo;
-- las mutaciones requieren intención humana verificable;
-- todos los resultados se sustentan con evidencias y quedan auditados;
-- el comportamiento por defecto es local, sin red y de solo lectura.
+- el LLM no posee referencia al Tool Layer ni al ProcessRunner;
+- la API no acepta command, executable, flags, path de dispositivo ni Action ID para `storage.disk-analysis`;
+- la Capability declara `risk=low`, `operation=observe` y `mode=read_only`;
+- la composición de producción permite únicamente tres invocaciones de proceso pasivas y exactas;
+- no hay shell, `sudo`, red ni instalación de paquetes;
+- los tests de integración deshabilitan probes de proceso y usan fixtures/mocks;
+- no existe operación de escritura sobre dispositivos en este vertical slice.
 
-## 2. Activos y fronteras
+## 2. Garantía read-only de `storage.disk-analysis`
 
-Activos: datos de los discos anfitriones, credenciales, historial, artefactos, modelos, manifiesto de herramientas, ejecutables y cadena de arranque.
+La garantía se aplica en varias capas:
 
-Fronteras:
+1. **Contrato HTTP/Capability:** `DiskAnalysisInput` solo permite `scope="all_detected"` y usa `extra="forbid"`.
+2. **Capability Manager:** `mode=read_only` solo puede registrarse con `operation=observe`.
+3. **Workflow:** las únicas Actions son recolección, construcción/persistencia de snapshot y proyección del Knowledge Graph.
+4. **Tool policy:** `ReadOnlyStorageProcessRunner` rechaza cualquier invocación que no coincida exactamente con la allowlist.
+5. **Process runner:** `create_subprocess_exec`, stdin cerrado, cwd `/`, entorno mínimo, timeout y output acotado.
+6. **Privilegios:** tools que abren dispositivos (`smartctl`, `blkid`) no se ejecutan desde FastAPI; quedan `privileged_broker_required` cuando están instaladas.
 
-1. Navegador ↔ API: sesión, CSRF, validación y escape de contenido.
-2. API/agente ↔ Ollama: toda salida se trata como propuesta no confiable.
-3. API ↔ broker: socket Unix, credenciales del peer, protocolo cerrado y autenticado.
-4. Broker ↔ agente de consentimiento: desafío/decisión fuera del proceso web para mutaciones.
-5. API/broker/consentimiento ↔ audit writer: emisores separados y ledger no escribible por la API.
-6. Broker ↔ sistema anfitrión: herramientas con privilegios mínimos y destino revalidado.
-7. Sistema Live ↔ persistencia: por defecto efímera; persistencia únicamente explícita, cifrada y ligada al mismo medio físico.
+Allowlist actual:
 
-La persistencia genérica de `live-boot` permanece deshabilitada. Una etiqueta o nombre GPT no basta: el activador exige LUKS2, PARTUUID/UUID registrados, marcador ARES, mismo ancestro físico que el medio Live y coincidencia única. Solo persiste datos ARES seleccionados, nunca el overlay raíz completo.
+```text
+lsblk   --json --bytes --output NAME,PATH,TYPE,SIZE,RO,RM,MODEL,VENDOR,TRAN,PKNAME,FSTYPE,FSVER,UUID,LABEL,MOUNTPOINTS,SERIAL,WWN
+findmnt --json --bytes --output SOURCE,TARGET,FSTYPE,OPTIONS
+df      -B1 --output=source,size,used,avail,pcent,target
+```
 
-## 3. Amenazas y controles
+Un intento de ejecutar `wipefs`, `smartctl`, `blkid`, `parted`, `fdisk`, `mkfs`, `fsck`, `mount`, `umount` o una variación de argumentos por esta ruta produce `read_only_policy_rejected` antes de crear un subprocess.
 
-| Amenaza | Control principal |
+## 3. Frontera privilegiada
+
+[ADR-0002](adr/0002-privilege-boundary.md) sigue vigente: operaciones que requieran abrir dispositivos o privilegio elevado pertenecen a `ares-tool-broker`, que deberá reconstruir argv desde una invocación canónica y revalidar identidad/policy.
+
+Este slice no ejecuta SMART activo si eso requiere cruzar esa frontera. La degradación es explícita:
+
+- herramienta ausente: `tool_not_installed`;
+- herramienta presente pero broker requerido: `privileged_broker_required`;
+- permiso/timeout/error en probes permitidos: motivo estructurado y fallback cuando existe evidencia de boot.
+
+La ausencia de SMART nunca se interpreta automáticamente como disco dañado.
+
+## 4. Datos hostiles y privacidad
+
+La salida de utilidades se parsea a modelos conocidos. Se limitan paths, tamaño, strings y caracteres. No se persiste stdout completo en el snapshot ni en el Event Bus.
+
+Serial/WWN pueden contribuir a una identidad estable, pero el snapshot guarda un hash de identidad de hardware, no esos identificadores crudos. Los stores de snapshot/diagnóstico usan directorios `0700`, archivos `0600`, límites de tamaño y escritura atómica.
+
+## 5. Eventos y auditoría
+
+Cada evento v2 incluye `event_id`, `timestamp`, `correlation_id`, `session_id`, `source`, `event_type`, `payload` y severity opcional. Los eventos de Tool contienen actor, motivo, recurso, tool, resultado y decisión.
+
+El journal JSONL actual es reconstruible operacionalmente, pero **no es una garantía tamper-evident**. [ADR-0006](adr/0006-audit-ledger.md) reserva esa propiedad para un `ares-audit-writer` separado con HMAC/checkpoints. No se debe describir el journal de esta fase como ledger de seguridad.
+
+## 6. Red y operación offline
+
+El vertical slice no necesita Internet. Los probes se ejecutan localmente y el snapshot/diagnóstico se persisten localmente. La UI usa same-origin `/api/v1`.
+
+La arquitectura general de ARES mantiene egress denegado por defecto; una futura `network.diagnose` será una Capability independiente con policy propia.
+
+## 7. Amenazas cubiertas en esta iteración
+
+| Amenaza | Control implementado |
 |---|---|
-| Prompt injection en logs o nombres de volumen | Datos marcados como no confiables, parser tipado, contexto mínimo; policy y broker independientes del LLM |
-| Comando o flags inyectados | No hay `run_command`; argv interno, `shell=False`, modelos estrictos y enums |
-| Path traversal o symlink | IDs opacos; raíces controladas; `openat2`/`O_NOFOLLOW` cuando aplique; revalidación |
-| Reparar otro disco tras hotplug | WWN/serial/by-id + major:minor + snapshot; resolver inmediatamente antes de ejecutar |
-| Reutilizar una aprobación | Nonce, hash del plan y argumentos, destino, expiración, consumo atómico |
-| Sesión robada/CSRF | Token opaco aleatorio, cookie HttpOnly/SameSite, Origin y CSRF, expiración y revocación |
-| API o parser comprometido | API sin root; broker mínimo con protocolo cerrado |
-| DoS por salida o proceso colgado | Límites de bytes, CPU/memoria, deadlines, grupo de procesos y estado `HUNG` |
-| Dos operaciones sobre el mismo disco | Locks por recurso y matriz de compatibilidad lectura/escritura |
-| API reescribe auditoría | Audit writer separado, HMAC y eventos críticos emitidos también por broker/consent agent |
-| Escritura accidental por el Live | Sin automount, swap ni resume; montaje `ro,nosuid,nodev,noexec`; modo READ_ONLY |
+| Inyección de comando/flags | input semántico + argv exacto + sin shell |
+| LLM ejecuta una tool | no existe referencia Tool/ProcessRunner en Reasoning |
+| Escritura accidental por Storage | allowlist solo lectura + ninguna tool mutable registrada |
+| `smartctl` ausente | limitación explícita, no diagnóstico falso |
+| Tool ausente | disponibilidad estructurada y fallback controlado |
+| Timeout/permisos/comando fallido | resultado degradado y tests deterministas |
+| Output hostil | parser tipado, límites y saneamiento |
+| Traversal al recuperar snapshot/diagnóstico | IDs restringidos y raíces privadas |
+| Secretos/identidad hardware | no stdout completo; identidad hardware hasheada |
 
-El ledger objetivo detecta reescritura por la API, no es *tamper-proof* frente a root. Sin un checkpoint firmado fuera del medio o sellado en TPM, tampoco puede demostrar que no se revirtió/truncó el almacenamiento completo. La cadena simple de hashes de la fase inicial solo detectará corrupción accidental y no se presentará como una garantía de seguridad.
+## 8. Fuera de alcance
 
-Broker y consent agent esperan un ACK del audit writer emitido solo después de `fdatasync` antes de conceder autoridad o ejecutar una tool. Si el writer no responde, aplican backpressure y fallan cerrado. Si cae después de un efecto, el broker mantiene lock y `RECONCILIATION_REQUIRED` hasta persistir/reconciliar el outcome.
+No se habilitan todavía reparticionado, formateo, reparación de filesystem, recuperación, backup, clonación, firewall, instalación de paquetes, cambios de Windows ni acciones destructivas.
 
-## 4. Autenticación y autorización
-
-### Autenticación local
-
-La identidad humana canónica será PAM/cuentas y grupos root-owned. La API conserva perfil, sesión y proyecciones de rol, pero no puede elevar la autoridad que el broker obtiene directamente del sistema. Si una fase transitoria conserva credenciales Argon2id propias de la UI, se consideran una identidad no autoritativa: cada mutación vuelve a autenticar por PAM, el ledger registra ambas identidades y cualquier discrepancia bloquea.
-
-- Sin usuario ni contraseña predeterminados reutilizables.
-- Bootstrap de un solo uso en TTY confiable; se deshabilita tras crear el primer administrador.
-- Contraseñas PAM con política del sistema; cualquier hash Argon2id de UI queda limitado al login web y versionado.
-- Sesiones opacas de 256 bits. Solo el SHA-256 del token se persiste.
-- Cookie `HttpOnly`, `SameSite=Strict` y `Secure` cuando haya TLS.
-- CSRF vinculado a sesión y comprobación estricta de `Origin` en mutaciones.
-- Expiración por inactividad y absoluta, revocación y reautenticación reciente para alto riesgo.
-- En la imagen Live/v1 el servidor escucha exclusivamente en `127.0.0.1`; no existe un modo remoto.
-
-Roles iniciales:
-
-- `VIEWER`: consulta casos, evidencias y reportes.
-- `OPERATOR`: inicia diagnósticos y autoriza acciones dentro de política.
-- `ADMIN`: administra usuarios, modelos, configuración y acceso a modo avanzado.
-
-El agente es un principal interno, no un usuario. Hereda una delegación acotada del usuario y nunca puede aprobar, reautenticar ni elevar el modo.
-
-### Modos
-
-El modo es un techo de capacidad, no una autorización:
-
-- `READ_ONLY`: solo observación. Un consentimiento en el canal confiable crea un `capability_grant` autoritativo en el broker, ligado a identidad autenticada, sesión/caso, tools/versiones exactas, máximo de usos y caducidad; SQLite solo proyecta el grant.
-- `REPAIR`: permite proponer cambios. Cada cambio necesita aprobación individual; alto riesgo también exige reautenticación, preflight, respaldo cuando sea viable y verificador.
-- `ADVANCED`: expone herramientas críticas a administradores. Expira pronto y usa confirmación reforzada; no desactiva ningún control.
-
-La capacidad efectiva es la intersección entre techo root-owned del broker, rol obtenido directamente de PAM/grupos del sistema, modo solicitado (que solo puede restringir), grant del broker, política/manifiesto root-owned y estado del recurso. Los roles/modos enviados por la API nunca amplían autoridad. `ALLOW` es imposible si no existe el grant aplicable y su uso no se consume/contabiliza atómicamente en el broker.
-
-### Consentimiento independiente para mutaciones
-
-El navegador puede solicitar un grant o confirmación, pero no producirlos. El broker crea el desafío exacto. `ares-consent-agent` corre con UID/socket distintos, autentica directamente mediante PAM/FIDO2 contra estado root-owned y obtiene rol/grupos sin consultar FastAPI.
-
-La versión v1 no confía en un diálogo X11 superpuesto. Tras preparar el desafío, exige que el usuario pulse una combinación de VT reservada (secure-attention gestionada fuera del navegador) para entrar al TTY de consent agent; allí ve plan, destino, riesgo y código. Logind retira input/DRM al kiosco mientras ese VT está activo. El usuario nunca introduce credenciales de reparación en una página web. Esta atención segura y `SO_PEERCRED`/permisos de socket separan `ares-api`, `ares-consent`, `ares-broker` y `ares-audit`; un prompt dibujado dentro de Firefox no es válido.
-
-El broker conserva la clave/estado de los desafíos y consume el nonce de un solo uso. Una API comprometida puede proponer operaciones, provocar solicitudes molestas y abusar de lecturas dentro de un grant ya concedido, pero no crear/ampliar grants ni forjar una aprobación de mutación. Consent agent aplica rate limit. Si broker, consent agent, PAM/root o el compositor/TTY confiable se comprometen, la garantía deja de existir. Esta frontera se probará antes de habilitar tools.
-
-## 5. Ejecución segura
-
-El broker recibe `tool@version`, argumentos canónicos y destinos propuestos. Revalida schema, manifest, policy e identidad, y reconstruye internamente el plan/argv; nunca acepta una línea de comandos ni un plan construido por frontend, API o modelo.
-
-Para cada proceso:
-
-- binario absoluto, propiedad de root y no escribible por otros;
-- `create_subprocess_exec`, nunca shell ni `sudo`;
-- stdin cerrado, descriptores cerrados, directorio fijo y entorno mínimo (`LC_ALL=C`);
-- timeout de cola, inicio, inactividad y total;
-- stdout y stderr drenados simultáneamente con límite;
-- grupo de procesos y política de cancelación declarada por herramienta;
-- límites de CPU, memoria, archivos, procesos y descriptores;
-- unidad systemd/perfil AppArmor/seccomp/capabilities adaptado a la operación.
-
-No se mata a ciegas una reparación después de su punto de commit. Si un proceso queda en espera de E/S no interrumpible, la invocación se marca `HUNG`, conserva el lock del dispositivo y bloquea otras acciones hasta intervención segura.
-
-## 6. Identidad de dispositivos
-
-La identidad se construye con una jerarquía: WWN/EUI/NGUID cuando existe; si no, combinación de serial, modelo, transporte, capacidad y ruta física; UUID/GPT GUID y `major:minor` solo complementan el snapshot porque pueden clonarse o cambiar. La topología de device-mapper, LVM, RAID y particiones se conserva hasta el dispositivo físico.
-
-El disco físico que contiene root/medio Live se determina desde `findmnt` + udev; él, sus ancestros y descendientes quedan excluidos de **toda mutación de diagnóstico/recuperación**. Solo herramientas de persistencia/exportación ARES pueden escribir una partición preprovisionada y reconocida de ese medio, sin tocar tabla de particiones, bootloader ni otros volúmenes. Si faltan atributos, hay duplicados o más de un dispositivo coincide, ARES permite observación pero falla cerrado para mutaciones. Justo antes de ejecutar se vuelve a resolver toda la identidad y se compara con el snapshot aprobado.
-
-## 7. Privacidad y red
-
-ARES no transmite automáticamente prompts, inventario, logs, telemetría ni reportes. Los artefactos se crean con permisos `0600`; directorios, `0700`. Seriales, nombres de usuario, rutas, IP y contenido de logs se clasifican y redactan al generar reportes. Tokens, contraseñas, CSRF, hashes de sesión y razonamiento interno del modelo nunca entran en logs o auditoría.
-
-La API y Ollama tienen egress denegado. `network.diagnose` es la única excepción prevista: requiere grant explícito, muestra destino/protocolo, usa una unidad aislada con allowlist y regla temporal, limita paquetes/bytes y no incluye contenido del diagnóstico. Por tanto puede generar tráfico de prueba consentido, pero no subir datos de ARES.
-
-No se carga Markdown/HTML sin sanitizar, no se usan CDN, analítica o fuentes remotas, y la UI no ejecuta acciones como resultado de texto del modelo.
-
-## 8. Reglas de lanzamiento
-
-Una herramienta de mutación no se habilita hasta contar con:
-
-1. schema estricto y fixtures de salida;
-2. identificación estable del destino y protección TOCTOU;
-3. preflight y consecuencias mostrables;
-4. política, riesgo y permisos documentados;
-5. lock de recurso y cancelación segura;
-6. backup/rollback cuando sea posible;
-7. verificador independiente;
-8. pruebas en VM/imagen desechable;
-9. auditoría y redacción;
-10. manual de recuperación si ARES se interrumpe.
-
-`mount`, `parted`, `fdisk`, `testdisk`, reparaciones `fsck`, `grub-install` y destinos libres de `rsync` permanecen deshabilitados hasta cumplir esta puerta.
+Antes de incorporar una Capability mutable se mantienen las puertas existentes: target identity estable, preflight, lock, consentimiento independiente, broker, verifier, rollback/backup cuando aplique, auditoría durable y pruebas con imágenes/VM desechables.

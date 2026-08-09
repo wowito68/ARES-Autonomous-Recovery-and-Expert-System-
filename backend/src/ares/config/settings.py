@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     readiness_timeout_seconds: Annotated[float, Field(gt=0, le=30)] = 2.0
     runtime_state_dir: Path = Path("/run/ares")
     capability_state_dir: Path | None = None
+    storage_process_probes_enabled: bool = True
     capability_plugin_entrypoint_group: Annotated[
         str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_.-]{2,127}$")
     ] = "ares.capabilities"

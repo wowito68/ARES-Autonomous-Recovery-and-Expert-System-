@@ -15,11 +15,14 @@ from ares.main import create_app
 
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
-    """Use an isolated file-backed SQLite database for each test."""
+    """Use isolated storage and disable real process probes in tests."""
 
     return Settings(
         environment=Environment.TEST,
         database_url=f"sqlite+aiosqlite:///{tmp_path / 'ares-test.db'}",
+        runtime_state_dir=tmp_path / "run",
+        capability_state_dir=tmp_path / "capabilities",
+        storage_process_probes_enabled=False,
         log_level="CRITICAL",
         log_format=LogFormat.TEXT,
     )
@@ -27,15 +30,11 @@ def settings(tmp_path: Path) -> Settings:
 
 @pytest.fixture
 def app(settings: Settings) -> FastAPI:
-    """Build one application instance with isolated settings."""
-
     return create_app(settings)
 
 
 @pytest.fixture
 async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
-    """Run FastAPI lifespan explicitly around an in-process client."""
-
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app, raise_app_exceptions=False)
         async with AsyncClient(transport=transport, base_url="http://testserver") as http_client:

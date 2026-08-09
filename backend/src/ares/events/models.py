@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Annotated, Any
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 
 def utc_now() -> datetime:
@@ -15,14 +16,116 @@ def utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+class EventSeverity(StrEnum):
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+    CRITICAL = "critical"
+
+
 class AresEvent(BaseModel):
-    """Immutable, serializable event written before it is dispatched."""
+    """Immutable event envelope written before it is dispatched.
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    Canonical fields follow the v2 envelope. Legacy ``id``/``name``/
+    ``occurred_at`` accessors remain available during migration, while the
+    durable sink explicitly includes those aliases in journal records.
+    """
 
-    id: str = Field(default_factory=lambda: uuid4().hex)
-    name: Annotated[str, Field(pattern=r"^[a-z][a-z0-9_.-]{2,95}$")]
+    model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
+
+    event_id: str = Field(
+        default_factory=lambda: uuid4().hex,
+        validation_alias=AliasChoices("event_id", "id"),
+    )
+    event_type: Annotated[str, Field(pattern=r"^[a-z][a-z0-9_.-]{2,95}$")] = Field(
+        validation_alias=AliasChoices("event_type", "name")
+    )
     source: Annotated[str, Field(pattern=r"^[a-z][a-z0-9_.-]{2,95}$")]
     correlation_id: Annotated[str, Field(min_length=8, max_length=128)]
-    occurred_at: datetime = Field(default_factory=utc_now)
+    session_id: Annotated[str, Field(min_length=8, max_length=128)]
+    timestamp: datetime = Field(
+        default_factory=utc_now,
+        validation_alias=AliasChoices("timestamp", "occurred_at"),
+    )
+    severity: EventSeverity | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
+
+    def __init__(
+        self,
+        *,
+        source: str,
+        correlation_id: str,
+        event_id: str | None = None,
+        id: str | None = None,
+        event_type: str | None = None,
+        name: str | None = None,
+        session_id: str | None = None,
+        timestamp: datetime | None = None,
+        occurred_at: datetime | None = None,
+        severity: EventSeverity | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        """Accept canonical and legacy envelope names during the v2 migration."""
+
+        values: dict[str, Any] = {
+            "source": source,
+            "correlation_id": correlation_id,
+            "payload": payload or {},
+        }
+        if event_id is not None:
+            values["event_id"] = event_id
+        elif id is not None:
+            values["id"] = id
+        if event_type is not None:
+            values["event_type"] = event_type
+        elif name is not None:
+            values["name"] = name
+        if session_id is not None:
+            values["session_id"] = session_id
+        if timestamp is not None:
+            values["timestamp"] = timestamp
+        elif occurred_at is not None:
+            values["occurred_at"] = occurred_at
+        if severity is not None:
+            values["severity"] = severity
+        super().__init__(**values)
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_session_to_correlation(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "session_id" not in value:
+            correlation_id = value.get("correlation_id")
+            if isinstance(correlation_id, str):
+                value = {**value, "session_id": correlation_id}
+        return value
+
+    @property
+    def id(self) -> str:
+        """Legacy accessor for ``event_id``."""
+
+        return self.event_id
+
+    @property
+    def name(self) -> str:
+        """Legacy accessor for ``event_type``."""
+
+        return self.event_type
+
+    @property
+    def occurred_at(self) -> datetime:
+        """Legacy accessor for ``timestamp``."""
+
+        return self.timestamp
+
+    def journal_record(self) -> dict[str, Any]:
+        """Return canonical fields plus legacy aliases for durable migration logs."""
+
+        record = self.model_dump(mode="json")
+        record.update(
+            {
+                "id": self.id,
+                "name": self.name,
+                "occurred_at": self.occurred_at.isoformat(),
+            }
+        )
+        return record

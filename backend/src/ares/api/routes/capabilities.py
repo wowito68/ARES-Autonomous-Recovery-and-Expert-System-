@@ -29,6 +29,7 @@ class PublicCapability(BaseModel):
     category: str
     risk_level: str
     operation_class: str
+    mode: str
     estimated_duration_seconds: float
     required_permissions: tuple[str, ...]
     required_evidence: tuple[str, ...]
@@ -38,6 +39,7 @@ class PublicCapability(BaseModel):
     emitted_events: tuple[str, ...]
     metrics: tuple[str, ...]
     input_schema: dict[str, Any]
+    output_schema: dict[str, Any]
     plugin_id: str
     plugin_version: str
     active: bool
@@ -54,6 +56,7 @@ class PublicCapability(BaseModel):
             category=metadata.category.value,
             risk_level=metadata.risk.value,
             operation_class=metadata.operation.value,
+            mode=metadata.mode.value,
             estimated_duration_seconds=metadata.estimated_duration_seconds,
             required_permissions=tuple(item.id for item in metadata.permissions),
             required_evidence=metadata.required_evidence,
@@ -63,6 +66,7 @@ class PublicCapability(BaseModel):
             emitted_events=metadata.emitted_events,
             metrics=metadata.metrics,
             input_schema=descriptor.input_schema,
+            output_schema=descriptor.output_schema,
             plugin_id=descriptor.plugin_id,
             plugin_version=descriptor.plugin_version,
             active=descriptor.active,
@@ -70,8 +74,6 @@ class PublicCapability(BaseModel):
 
 
 class CapabilityCatalog(BaseModel):
-    """Search result with stable ordering."""
-
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     capabilities: tuple[PublicCapability, ...]
@@ -79,8 +81,6 @@ class CapabilityCatalog(BaseModel):
 
 
 class PublicStepExecution(BaseModel):
-    """Step evidence without a private action or tool identifier."""
-
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     step_id: str

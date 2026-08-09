@@ -1,93 +1,132 @@
 # Roadmap incremental
 
-Una fase solo se cierra cuando pasa su puerta de salida. Las fechas se decidirán tras medir la fase anterior; el orden está condicionado por seguridad, no por apariencia visual.
+Una fase solo se cierra cuando pasa su puerta de salida. El orden está condicionado por seguridad y evidencia verificable, no por apariencia visual.
 
-> Este archivo conserva el roadmap funcional de la aplicación. La solicitud “ARES — Fase 2” abrió en paralelo el workstream del sistema operativo, desglosado como OS0–OS8 en [ares-os-roadmap.md](ares-os-roadmap.md). Implementar el sustrato Live ahora no declara cerradas las fases funcionales ni la futura integración completa de producto.
+El workstream ARES OS permanece desglosado en [ares-os-roadmap.md](ares-os-roadmap.md). La existencia de una Capability funcional no declara implementadas las futuras fronteras privilegiadas ni la release ISO completa.
 
-## Fase 0 — Fundamentos (en curso)
+## Incremento completado — primer vertical slice funcional
 
-Entregables:
+`storage.disk-analysis@1.1.0` demuestra el recorrido:
 
-- arquitectura, threat model, datos, API, agente/tools, frontend y Live;
-- ADR de monolito, privilegios y aprobaciones;
-- backend arrancable con configuración, SQLite, request IDs, errores y salud;
-- CI/calidad base.
+```text
+API/CLI/UI
+-> Application Service
+-> Reasoning Engine
+-> Capability Manager
+-> Workflow Engine
+-> Tool Layer
+-> SystemStorageSnapshot
+-> Knowledge Graph
+-> DiagnosticResult
+```
 
-Puerta: tests y análisis estático verdes; documentación diferencia claramente diseño e implementación.
+Incluye probes pasivos `lsblk`, `findmnt` y `df`; degradación estructurada de `smartctl`/`blkid`; snapshot persistido; Knowledge Graph; Event Bus; diagnóstico determinista; API Storage; CLI; UI mínima y pruebas sin hardware real.
 
-## Fase 1 — Identidad y auditoría
+No incluye mutaciones, broker privilegiado operativo, consentimiento independiente ni ledger criptográfico.
+
+## Fase 0 — Fundamentos
+
+Entregables existentes:
+
+- arquitectura, threat model, API, datos y Live OS;
+- FastAPI/SQLite, configuración, request IDs, Problem Details y health;
+- CI Python 3.12/3.13, Ruff, mypy estricto y build;
+- plataforma v2 de Capabilities, Workflow Engine, Event Bus y Knowledge Graph.
+
+Puerta pendiente para cerrar formalmente la fase global: alinear toda la documentación histórica y los paquetes de distribución con el runtime v2.
+
+## Fase 1 — Identidad y auditoría autoritativa
 
 - Bootstrap local sin credenciales predeterminadas.
-- Sesiones opacas, Argon2id, CSRF, roles y reautenticación.
-- Migraciones Alembic y repositorios.
+- Sesiones opacas, CSRF, roles y reautenticación.
+- Migraciones Alembic y repositorios de historial.
 - `ares-audit-writer`, ledger HMAC, proyección SQLite y checkpoints exportables.
 
-Puerta: matriz de autenticación/RBAC/CSRF, revocación y atomicidad cubierta; ninguna acción importante fuera de auditoría.
+Puerta: matriz de autenticación/RBAC/CSRF, revocación y atomicidad cubierta; ningún evento crítico fuera del writer autoritativo.
 
-## Fase 2 — Vertical slice de solo lectura
+## Fase 2 — Observación Storage segura
 
-- Contrato, registry, grants y policy engine.
-- `storage.list_block_devices@1` end-to-end.
-- Inventario/snapshot, evidencias, timeouts, límites y SSE.
-- UI mínima de login, overview y discos, sin Ollama.
+Estado: **parcialmente implementada mediante `storage.disk-analysis@1.1.0`**.
 
-Puerta: funciona con backend real; inyección, herramienta desconocida, falta de grant, salida hostil y cambio de identidad se bloquean.
+Implementado:
 
-## Fase 3 — Agente local
+- Capability registration/discovery y output tipado;
+- Tool Layer read-only con argv fijo;
+- parsers `lsblk`, `findmnt`, `df`, `blkid` y SMART JSON;
+- snapshot, KG, eventos, diagnóstico, API, CLI y UI;
+- fixtures/mocks; no dependencia de disco real;
+- cobertura global superior al gate de 85%.
 
-- Perfiles Ollama por digest y detección de capacidades.
-- Orquestador acotado, structured outputs, citas de evidencia y modelo falso.
-- Chat, hipótesis y diagnóstico; nunca reparación.
+Pendiente para cerrar la fase:
 
-Puerta: suites deterministas demuestran que el modelo no ejecuta, aprueba ni afirma resultados sin evidencia; operación útil con Ollama caído.
+- integrar lectura SMART/blkid privilegiada a través de `ares-tool-broker` sin cambiar el contrato de `storage.disk-analysis`;
+- identidad estable con udev/by-id/major:minor y protección explícita del medio Live;
+- historial/retención de snapshots y diagnósticos;
+- SSE/progreso si se necesita una ejecución más larga;
+- pruebas de imagen/VM que demuestren ausencia de escrituras a block devices.
 
-Estado parcial: ya existe el adaptador loopback, estado de runtime/modelo, chat
-sin tools y UI degradable. Todavía faltan el pack redistribuible, modelo por
-digest, orquestador/evidencias y la puerta determinista completa.
+Puerta: la Capability funciona offline sobre la imagen ARES, la identidad se revalida y una suite de sistema confirma cero operaciones de escritura.
+
+## Fase 3 — Agente local sobre evidencia
+
+- Perfiles Ollama por digest y structured outputs.
+- Orquestador acotado con presupuesto, hipótesis, evidence IDs y modelo falso determinista.
+- Chat que consume `DiagnosticResult`/Knowledge Graph sin acceso directo a Tools.
+
+Estado parcial: ya existe adaptador loopback y chat sin Tools; el vertical slice añade razonamiento determinista de Storage. Falta integrar el agente conversacional con evidencia versionada sin permitir autoejecución.
+
+Puerta: suites deterministas demuestran que el modelo no ejecuta, aprueba ni afirma resultados sin evidencia; ARES sigue siendo útil con Ollama caído.
 
 ## Fase 4 — Broker y consentimiento independiente
 
-- Protocolo por socket Unix, peer credentials y manifiesto.
-- Desafíos autenticados por el broker, locks, cancelación y unidades aisladas.
-- `ares-consent-agent` por TTY seguro; la API no puede fabricar grants ni `APPROVED`.
-- Una reparación simulada con aprobación exacta y verificador.
-- UI completa de riesgo/rechazo/expiración.
+- Socket Unix autenticado, peer credentials y manifiesto root-owned.
+- Implementar primero una **lectura privilegiada** de SMART/blkid para validar la frontera sin introducir escritura.
+- Luego desafíos del broker, locks, cancelación y `ares-consent-agent` para mutaciones futuras.
+- Reparación simulada con verificador antes de tocar dispositivos reales.
 
-Puerta: replay, CSRF, doble clic, sustitución de parámetros/destino, hotplug y concurrencia fallan cerrado.
+Puerta: replay, sustitución de parámetros/destino, hotplug, concurrencia y fallos de auditoría cierran de forma segura.
 
-## Fase 5 — Reportes y frontend operativo
+## Fase 5 — Historial y frontend operativo
 
-- Historial, logs, hardware, acciones y reportes técnico/ejecutivo.
+- Historial de snapshots/diagnósticos y comparación temporal.
+- Reportes técnicos/ejecutivos con evidence IDs.
 - Exportación local redactada.
-- Responsive, oscuro, i18n y WCAG 2.2 AA.
+- Responsive, i18n y WCAG 2.2 AA.
 
-Puerta: Playwright y axe pasan flujos críticos; cada conclusión de reporte conserva evidencia.
+Puerta: pruebas E2E de flujos críticos y trazabilidad completa desde conclusión a evidencia.
 
-## Fase 6 — Primera ISO integrada de producto
+## Fase 6 — ISO integrada
 
-- integrar los `.deb` del producto y el APT local firmado sobre la base Debian Live iniciada en el workstream ARES OS;
-- Runtime Python 3.12 aislado y modelo pequeño.
-- Sesión efímera y persistencia cifrada opcional.
+- Paquetes del producto y APT local firmado sobre Debian Live.
+- Runtime Python aislado y modelo local pequeño.
+- Persistencia cifrada opcional.
 
-Puerta: arranca BIOS/UEFI sin red, no monta/escribe discos anfitriones y pasa QEMU/smoke/security checks.
+Puerta: BIOS/UEFI, operación offline, no automount/escritura de discos anfitriones y smoke/security checks en QEMU.
 
-## Fase 7 — Herramientas de recuperación
+## Fase 7 — Capabilities de recuperación
 
-Incorporar una familia por iteración:
+Una familia por incremento, sin convertir `storage.disk-analysis` en una Capability mutable:
 
-1. inventario, SMART y logs;
-2. copias/rsync con destinos internos;
-3. comprobación y reparación de filesystems;
-4. GRUB BIOS/UEFI;
-5. recuperación con testdisk;
-6. memoria y red.
+1. SMART privilegiado e inventario de identidad;
+2. backup con destino administrado;
+3. filesystem check read-only;
+4. filesystem repair con verifier;
+5. recuperación de archivos;
+6. boot repair;
+7. memoria/red.
 
-Puerta por herramienta: contrato, parser/fixtures, política, target identity, preflight, sandbox, lock, cancelación, verificador, auditoría, documentación y pruebas VM con imágenes desechables.
+Puerta por Capability: modelos tipados, target identity, policy, broker, preflight, lock, cancelación, rollback/backup cuando aplique, verifier, auditoría, docs y pruebas en VM/imágenes desechables.
 
 ## Fase 8 — Release candidate
 
-- Secure Boot, packs de modelos, SBOM, firmas y procedencia.
+- Secure Boot, SBOM, firmas y procedencia.
 - Matriz de hardware físico y recuperación ante corte/desconexión.
-- Auditoría de seguridad, licencias y proceso de rollback de release.
+- Auditoría de seguridad, licencias y rollback de release.
 
-Puerta: no hay riesgos críticos abiertos y la documentación de instalación, uso, desarrollo y recuperación coincide con el artefacto firmado.
+Puerta: sin riesgos críticos abiertos y documentación alineada con el artefacto firmado.
+
+## Siguiente incremento recomendado
+
+**Integrar SMART/blkid mediante la frontera privilegiada existente, todavía en modo OBSERVE/READ_ONLY.**
+
+Es el siguiente paso más seguro porque valida `ares-tool-broker`, identidad de dispositivos y evidencia privilegiada sin introducir ninguna mutación. Debe reutilizar `SmartProbe`, `BlkidProbe`, `SystemStorageSnapshot` y `DiagnosticResult`, no crear un camino paralelo.

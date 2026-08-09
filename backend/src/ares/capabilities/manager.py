@@ -12,8 +12,10 @@ from ares.capabilities.models import (
     CapabilityCategory,
     CapabilityDescriptor,
     CapabilityMetadata,
+    CapabilityMode,
+    OperationClass,
 )
-from ares.workflows import WorkflowDefinition, WorkflowEngine, WorkflowExecution
+from ares.workflows import ExecutionStatus, WorkflowDefinition, WorkflowEngine, WorkflowExecution
 
 _CORE_API_VERSION = "2.0"
 
@@ -26,13 +28,7 @@ class _Registration:
 
 
 class CapabilityManager:
-    """Policy boundary between reasoning and private workflow actions.
-
-    Multiple versions may be installed side by side. The highest compatible
-    semantic version is active unless an explicit version is requested by an
-    internal caller. Public callers still reason over capability identifiers,
-    not plugin classes, actions or tools.
-    """
+    """Policy boundary between reasoning and private workflow actions."""
 
     def __init__(
         self,
@@ -101,8 +97,6 @@ class CapabilityManager:
         query: str | None = None,
         category: CapabilityCategory | None = None,
     ) -> tuple[CapabilityMetadata, ...]:
-        """Search active metadata, never private action implementations."""
-
         return tuple(
             descriptor.metadata for descriptor in self.descriptors(query=query, category=category)
         )
@@ -113,8 +107,6 @@ class CapabilityManager:
         query: str | None = None,
         category: CapabilityCategory | None = None,
     ) -> tuple[CapabilityDescriptor, ...]:
-        """Generate searchable documentation for active capability versions."""
-
         terms = tuple((query or "").casefold().split())
         matches: list[CapabilityDescriptor] = []
         for capability_id in self._capabilities:
@@ -144,8 +136,6 @@ class CapabilityManager:
         *,
         version: str | None = None,
     ) -> CapabilityDescriptor | None:
-        """Return generated documentation for one installed version."""
-
         registration = self._registration(capability_id, version)
         if registration is None:
             return None
@@ -154,14 +144,13 @@ class CapabilityManager:
         return CapabilityDescriptor(
             metadata=metadata,
             input_schema=registration.capability.input_model.model_json_schema(),
+            output_schema=registration.capability.output_model.model_json_schema(),
             plugin_id=registration.plugin_id,
             plugin_version=registration.plugin_version,
             active=active,
         )
 
     def versions(self, capability_id: str) -> tuple[CapabilityDescriptor, ...]:
-        """List all installed versions, newest first."""
-
         versions = self._capabilities.get(capability_id, {})
         ordered = sorted(versions, key=_version_tuple, reverse=True)
         return tuple(
@@ -175,8 +164,6 @@ class CapabilityManager:
         return descriptor.metadata if descriptor is not None else None
 
     def resolve_dependencies(self, capability_id: str) -> tuple[CapabilityMetadata, ...]:
-        """Return dependencies in topological order, followed by the target."""
-
         if capability_id not in self._capabilities:
             raise KeyError(capability_id)
         ordered: list[CapabilityMetadata] = []
@@ -208,7 +195,7 @@ class CapabilityManager:
         *,
         version: str | None = None,
     ) -> WorkflowExecution:
-        """Validate capability-specific input and dispatch its private workflow."""
+        """Validate typed input, run the private workflow and validate typed output."""
 
         if not self._sealed:
             raise RuntimeError("capability registry is not sealed")
@@ -219,7 +206,11 @@ class CapabilityManager:
         validated = capability.input_model.model_validate(payload)
         definition = capability.build_workflow(validated)
         self._validate_workflow_contract(capability.metadata, definition)
-        return await self.workflow_engine.execute(definition)
+        execution = await self.workflow_engine.execute(definition)
+        if execution.status is not ExecutionStatus.SUCCEEDED or execution.result is None:
+            return execution
+        validated_output = capability.output_model.model_validate(execution.result)
+        return execution.model_copy(update={"result": validated_output.model_dump(mode="json")})
 
     def _register_capability(
         self,
@@ -227,10 +218,17 @@ class CapabilityManager:
         capability: Capability,
     ) -> None:
         metadata = capability.metadata
-        if not isinstance(capability.input_model, type) or not issubclass(
-            capability.input_model, BaseModel
+        for model, label in (
+            (capability.input_model, "input_model"),
+            (capability.output_model, "output_model"),
         ):
-            raise ValueError("capability input_model must be a Pydantic model")
+            if not isinstance(model, type) or not issubclass(model, BaseModel):
+                raise ValueError(f"capability {label} must be a Pydantic model")
+        if (
+            metadata.mode is CapabilityMode.READ_ONLY
+            and metadata.operation is not OperationClass.OBSERVE
+        ):
+            raise ValueError("read-only capabilities must use observe operation class")
         self._validate_compatibility(
             metadata.os_compatibility.families,
             metadata.os_compatibility.architectures,
