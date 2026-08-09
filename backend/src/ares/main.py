@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from ares.api.router import api_router
@@ -135,7 +136,9 @@ def create_app(
         docs_url=None,
         redoc_url=None,
         openapi_url=(
-            "/openapi.json" if resolved_settings.environment is not Environment.PRODUCTION else None
+            "/openapi.json"
+            if resolved_settings.environment is not Environment.PRODUCTION
+            else None
         ),
         lifespan=lifespan,
     )
@@ -161,6 +164,16 @@ def create_app(
     install_problem_handlers(application)
     application.include_router(api_router, prefix=resolved_settings.api_prefix)
     if resolved_settings.static_dir is not None and resolved_settings.static_dir.is_dir():
+        index_path = resolved_settings.static_dir / "index.html"
+
+        @application.get("/", include_in_schema=False, response_class=HTMLResponse)
+        async def platform_index() -> HTMLResponse:
+            source = index_path.read_text(encoding="utf-8")
+            loader = '<script src="/backup.js" defer></script>'
+            if loader not in source:
+                source = source.replace("</body>", f"  {loader}\n</body>")
+            return HTMLResponse(source)
+
         application.mount(
             "/",
             StaticFiles(directory=resolved_settings.static_dir, html=True),
