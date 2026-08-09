@@ -64,7 +64,7 @@ class ConsentAuthority:
         self,
         audit: AuditLedger,
         *,
-        broker_uid: int = 979,
+        broker_uid: int = 0,
         operator_uid: int = 1000,
     ) -> None:
         self.audit = audit
@@ -225,9 +225,7 @@ class UnixConsentClient:
             timeout_seconds=3.0,
         )
 
-    async def wait(
-        self, challenge_id: str, timeout_seconds: float = 600.0
-    ) -> dict[str, Any]:
+    async def wait(self, challenge_id: str, timeout_seconds: float = 600.0) -> dict[str, Any]:
         return await _request(
             self.socket_path,
             {"action": "wait", "challenge_id": challenge_id},
@@ -288,9 +286,7 @@ async def serve_consent_agent(
             response = {"ok": False, "code": "CONSENT_FORBIDDEN"}
         except Exception as exc:
             response = {"ok": False, "code": _safe_error(exc)}
-        encoded = json.dumps(
-            response, ensure_ascii=False, separators=(",", ":")
-        ).encode("utf-8")
+        encoded = json.dumps(response, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         writer.write(encoded + b"\n")
         try:
             await writer.drain()
@@ -315,14 +311,10 @@ async def _request(
             timeout=min(timeout_seconds, 3.0),
         )
         try:
-            encoded = json.dumps(
-                payload, ensure_ascii=False, separators=(",", ":")
-            ).encode("utf-8")
+            encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
             writer.write(encoded + b"\n")
             await writer.drain()
-            line = await asyncio.wait_for(
-                reader.readline(), timeout=timeout_seconds
-            )
+            line = await asyncio.wait_for(reader.readline(), timeout=timeout_seconds)
         finally:
             writer.close()
             await writer.wait_closed()
