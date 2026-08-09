@@ -1,4 +1,4 @@
-"""Privileged ARES Tool Broker implementation for the initial backup mutation."""
+"""Privileged ARES Tool Broker with capability-specific mutation policies."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import os
 import socket
 import struct
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
@@ -17,7 +18,9 @@ from uuid import uuid4
 from ares.audit.ledger import AuditLedger, AuditLedgerError, UnixAuditLedgerClient
 from ares.backup.models import AuthorizationGrant, Backup, BackupManifest, BackupPlan
 from ares.runtime.consent import UnixConsentClient
+from ares.runtime.filesystem_broker import FilesystemBroker
 from ares.tools.backup import BackupFilesystemTools, BackupToolError
+from ares.tools.filesystem import FilesystemToolError, FilesystemToolSuite
 
 _MAX_REQUEST_BYTES = 4_000_000
 _MAX_RESPONSE_BYTES = 128_000_000
@@ -261,33 +264,39 @@ async def serve_tool_broker(
     audit_socket: Path = Path("/run/ares/sockets/audit.sock"),
     consent_socket: Path = Path("/run/ares/sockets/consent.sock"),
 ) -> None:
-    broker = BackupBroker(
-        BackupFilesystemTools(),
-        UnixAuditLedgerClient(audit_socket),
-        UnixConsentClient(consent_socket),
-    )
+    audit = UnixAuditLedgerClient(audit_socket)
+    consent = UnixConsentClient(consent_socket)
+    backup_broker = BackupBroker(BackupFilesystemTools(), audit, consent)
+    filesystem_broker = FilesystemBroker(FilesystemToolSuite(), audit, consent)
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         async def send(message: dict[str, Any]) -> None:
-            encoded = json.dumps(message, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            encoded = json.dumps(message, ensure_ascii=False, separators=(",", ":")).encode(
+                "utf-8"
+            )
             if len(encoded) > _MAX_RESPONSE_BYTES:
-                raise BackupToolError("BACKUP_BROKER_RESPONSE_TOO_LARGE")
+                raise ValueError("broker response too large")
             writer.write(encoded + b"\n")
             await writer.drain()
 
         try:
             line = await asyncio.wait_for(reader.readline(), timeout=3.0)
             if not line or len(line) > _MAX_REQUEST_BYTES:
-                raise BackupToolError("BACKUP_BROKER_REQUEST_INVALID")
+                raise ValueError("broker request invalid")
             request = json.loads(line)
             if not isinstance(request, dict):
-                raise BackupToolError("BACKUP_BROKER_REQUEST_INVALID")
-            result = await broker.dispatch(request, _peer_uid(writer), send)
+                raise ValueError("broker request invalid")
+            action = request.get("action")
+            peer_uid = _peer_uid(writer)
+            if isinstance(action, str) and action.startswith("filesystem."):
+                result = await filesystem_broker.dispatch(request, peer_uid, send)
+            else:
+                result = await backup_broker.dispatch(request, peer_uid, send)
             await send({"type": "result", "payload": result})
         except asyncio.CancelledError:
             raise
         except PermissionError:
-            await send({"type": "error", "code": "BACKUP_BROKER_FORBIDDEN"})
+            await send({"type": "error", "code": "BROKER_FORBIDDEN"})
         except Exception as exc:
             await send({"type": "error", "code": _safe_code(exc)})
         finally:
@@ -324,10 +333,8 @@ async def _unix_server(handler, socket_path: Path) -> asyncio.AbstractServer:
 
 def _prepare_socket_path(socket_path: Path) -> None:
     socket_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
+    with suppress(FileNotFoundError):
         socket_path.unlink()
-    except FileNotFoundError:
-        pass
 
 
 def _token(value: str) -> str:
@@ -337,8 +344,10 @@ def _token(value: str) -> str:
 def _safe_code(exc: BaseException) -> str:
     if isinstance(exc, BackupToolError):
         return exc.code
+    if isinstance(exc, FilesystemToolError):
+        return exc.code
     if isinstance(exc, AuditLedgerError):
         return "AUDIT_LEDGER_UNAVAILABLE"
     if isinstance(exc, asyncio.CancelledError):
-        return "BACKUP_CANCELLED"
-    return "BACKUP_BROKER_FAILED"
+        return "BROKER_CANCELLED"
+    return "BROKER_FAILED"
