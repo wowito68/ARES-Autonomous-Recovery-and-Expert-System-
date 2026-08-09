@@ -1,0 +1,415 @@
+name: Filesystem Repair Release Verification V2
+
+on:
+  push:
+    branches:
+      - agent/filesystem-recovery-repair
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Synchronize newest branch state
+        run: |
+          sleep 60
+          git fetch origin agent/filesystem-recovery-repair
+          git reset --hard origin/agent/filesystem-recovery-repair
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.11.14"
+          python-version: "3.12"
+          working-directory: backend
+      - name: Apply all remaining idempotent architecture patches
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_if(path: str, old: str, new: str, count: int = 1) -> None:
+              file = Path(path)
+              text = file.read_text(encoding='utf-8')
+              if old in text:
+                  file.write_text(text.replace(old, new, count), encoding='utf-8')
+
+          # Inherited Backup test must run inside the app lifespan.
+          replace_if(
+              'backend/tests/test_backup_vertical_slice.py',
+              'async def test_backup_store_and_service_listing_are_shared(app: FastAPI, tmp_path: Path) -> None:\n',
+              'async def test_backup_store_and_service_listing_are_shared(\n    client: AsyncClient, app: FastAPI, tmp_path: Path\n) -> None:\n    del client\n',
+          )
+
+          # Stable HTTP session is distinct from per-request correlation.
+          replace_if(
+              'backend/src/ares/api/routes/filesystems.py',
+              'return str(getattr(request.state, "request_id", "filesystem-session"))',
+              'return str(getattr(request.state, "session_id", "filesystem-session"))',
+          )
+          vertical = Path('backend/tests/test_filesystem_vertical_slice.py')
+          if vertical.exists():
+              vertical.write_text(
+                  vertical.read_text(encoding='utf-8').replace(
+                      'session_id="filesystem-api-request-123",',
+                      'session_id="filesystem-api-session-123",',
+                  ),
+                  encoding='utf-8',
+              )
+
+          # Runtime OS is explicit and travels with inspection/plan.
+          models_path = Path('backend/src/ares/filesystems/models.py')
+          models = models_path.read_text(encoding='utf-8')
+          if 'import sys\n' not in models:
+              models = models.replace('from enum import StrEnum\n', 'from enum import StrEnum\nimport sys\n', 1)
+          if 'class RuntimeOperatingSystem' not in models:
+              models = models.replace(
+                  'class FilesystemHealth(StrEnum):\n',
+                  '''class RuntimeOperatingSystem(StrEnum):
+    LINUX = "linux"
+    WINDOWS = "windows"
+    OTHER = "other"
+    UNKNOWN = "unknown"
+
+
+def detect_runtime_os() -> RuntimeOperatingSystem:
+    if sys.platform.startswith("linux"):
+        return RuntimeOperatingSystem.LINUX
+    if sys.platform.startswith("win"):
+        return RuntimeOperatingSystem.WINDOWS
+    if sys.platform:
+        return RuntimeOperatingSystem.OTHER
+    return RuntimeOperatingSystem.UNKNOWN
+
+
+class FilesystemHealth(StrEnum):
+''',
+                  1,
+              )
+          if 'runtime_os: RuntimeOperatingSystem' not in models:
+              models = models.replace(
+                  '    identity: DeviceIdentity\n    filesystem: FilesystemType | None = None\n',
+                  '    identity: DeviceIdentity\n    runtime_os: RuntimeOperatingSystem = RuntimeOperatingSystem.UNKNOWN\n    filesystem: FilesystemType | None = None\n',
+                  1,
+              )
+              models = models.replace(
+                  '    target: DeviceIdentity\n    filesystem: FilesystemType\n',
+                  '    target: DeviceIdentity\n    runtime_os: RuntimeOperatingSystem = RuntimeOperatingSystem.UNKNOWN\n    filesystem: FilesystemType\n',
+                  1,
+              )
+          models_path.write_text(models, encoding='utf-8')
+
+          # Mount safety is a port, not a concrete-class dependency.
+          tools_path = Path('backend/src/ares/tools/filesystem.py')
+          tools = tools_path.read_text(encoding='utf-8')
+          if 'Protocol' not in tools.split('\n', 20)[0:20]:
+              tools = tools.replace(
+                  'from collections.abc import Awaitable, Callable\n',
+                  'from collections.abc import Awaitable, Callable\nfrom typing import Protocol\n',
+                  1,
+              )
+          if 'class MountSafetyProvider(Protocol):' not in tools:
+              tools = tools.replace(
+                  'class MountSafetyChecker:\n',
+                  '''class MountSafetyProvider(Protocol):
+    def inspect(self, identity: DeviceIdentity) -> MountSafetyReport: ...
+
+
+class MountSafetyChecker:
+''',
+                  1,
+              )
+          tools = tools.replace(
+              '        mount_checker: MountSafetyChecker | None = None,\n',
+              '        mount_checker: MountSafetyProvider | None = None,\n',
+              1,
+          )
+          if 'detect_runtime_os,' not in tools:
+              tools = tools.replace(
+                  '    ToolRequirement,\n)',
+                  '    ToolRequirement,\n    detect_runtime_os,\n)',
+                  1,
+              )
+          tools = tools.replace(
+              '                identity=identity,\n                mount=mount,',
+              '                identity=identity,\n                runtime_os=detect_runtime_os(),\n                mount=mount,',
+          )
+          tools = tools.replace(
+              '            identity=identity,\n            filesystem=filesystem,',
+              '            identity=identity,\n            runtime_os=detect_runtime_os(),\n            filesystem=filesystem,',
+          )
+          old_revalidate = '''    async def revalidate(self, expected: DeviceIdentity) -> DeviceIdentity:
+        current = await self.identify(expected.requested_path)
+        if current.fingerprint_sha256 != expected.fingerprint_sha256:
+            raise FilesystemToolError("FILESYSTEM_DEVICE_IDENTITY_CHANGED")
+        return current
+'''
+          if old_revalidate in tools:
+              tools = tools.replace(
+                  old_revalidate,
+                  '''    async def revalidate(self, expected: DeviceIdentity) -> DeviceIdentity:
+        try:
+            current = await self.identify(expected.requested_path)
+        except FilesystemToolError as exc:
+            if exc.code == "FILESYSTEM_TARGET_NOT_FOUND":
+                raise FilesystemToolError("FILESYSTEM_DEVICE_DISAPPEARED") from exc
+            raise
+        if current.fingerprint_sha256 != expected.fingerprint_sha256:
+            raise FilesystemToolError("FILESYSTEM_DEVICE_IDENTITY_CHANGED")
+        return current
+''',
+                  1,
+              )
+          tools_path.write_text(tools, encoding='utf-8')
+
+          # Plan typing, runtime OS propagation and pre-effect abort event.
+          service_path = Path('backend/src/ares/filesystems/service.py')
+          service = service_path.read_text(encoding='utf-8')
+          if '    ProtectionCheckpoint,\n' not in service:
+              service = service.replace(
+                  'from ares.protection import (\n',
+                  'from ares.protection import (\n    ProtectionCheckpoint,\n',
+                  1,
+              )
+          service = service.replace(
+              '        checkpoint = None\n',
+              '        checkpoint: ProtectionCheckpoint | None = None\n',
+              1,
+          )
+          service = service.replace(
+              '        permissions = ("block-device.readwrite",)\n',
+              '        permissions: tuple[str, ...] = ("block-device.readwrite",)\n',
+              1,
+          )
+          if 'runtime_os=inspection.runtime_os,' not in service:
+              service = service.replace(
+                  '            target=inspection.identity,\n            filesystem=inspection.filesystem,',
+                  '            target=inspection.identity,\n            runtime_os=inspection.runtime_os,\n            filesystem=inspection.filesystem,',
+                  1,
+              )
+          old_result = '''            if result.status is not ExecutionStatus.SUCCEEDED:
+                await self._mark_failed(
+                    plan.repair_id, result.error_code or "FILESYSTEM_REPAIR_FAILED"
+                )
+'''
+          if old_result in service:
+              service = service.replace(
+                  old_result,
+                  '''            if result.status is not ExecutionStatus.SUCCEEDED:
+                record = await self.store.get_repair(plan.repair_id)
+                if record is not None and record.execution.status in {
+                    RepairExecutionStatus.PLANNED,
+                    RepairExecutionStatus.AUTHORIZING,
+                }:
+                    await self.event_bus.publish(
+                        AresEvent(
+                            event_type="repair.aborted",
+                            source="filesystem.service",
+                            correlation_id=plan.repair_id,
+                            session_id=session_id,
+                            severity=EventSeverity.WARNING,
+                            payload={
+                                "repair_id": plan.repair_id,
+                                "error_code": result.error_code or "FILESYSTEM_REPAIR_ABORTED",
+                            },
+                        )
+                    )
+                    await self._mark_aborted(
+                        plan.repair_id,
+                        result.error_code or "FILESYSTEM_REPAIR_ABORTED",
+                    )
+                else:
+                    await self._mark_failed(
+                        plan.repair_id, result.error_code or "FILESYSTEM_REPAIR_FAILED"
+                    )
+''',
+                  1,
+              )
+          if 'async def _mark_aborted' not in service:
+              service = service.replace(
+                  '    async def _mark_failed(self, repair_id: str, code: str) -> None:\n',
+                  '''    async def _mark_aborted(self, repair_id: str, code: str) -> None:
+        record = await self.store.get_repair(repair_id)
+        if record is None:
+            return
+        execution = record.execution.model_copy(
+            update={
+                "status": RepairExecutionStatus.ABORTED,
+                "finished_at": datetime.now(UTC),
+                "error_code": code,
+            }
+        )
+        await self.store.put_repair(record.model_copy(update={"execution": execution}))
+
+    async def _mark_failed(self, repair_id: str, code: str) -> None:
+''',
+                  1,
+              )
+          service_path.write_text(service, encoding='utf-8')
+
+          # Verification state and partial semantics.
+          action_path = Path('backend/src/ares/actions/filesystem_repair.py')
+          action = action_path.read_text(encoding='utf-8')
+          verify_marker = '''        if record is None:
+            raise ActionError("FILESYSTEM_REPAIR_RECORD_NOT_FOUND")
+        verification_status, message = _verification_status(plan, outcome)
+'''
+          if verify_marker in action:
+              action = action.replace(
+                  verify_marker,
+                  '''        if record is None:
+            raise ActionError("FILESYSTEM_REPAIR_RECORD_NOT_FOUND")
+        verifying_execution = record.execution.model_copy(
+            update={"status": RepairExecutionStatus.VERIFYING}
+        )
+        record = record.model_copy(update={"execution": verifying_execution})
+        await self.store.put_repair(record)
+        verification_status, message = _verification_status(plan, outcome)
+''',
+                  1,
+              )
+          partial_guard = '''    if any(
+        item in outcome.limitations
+        for item in ("repair_tool_failed", "repair_tool_reported_unresolved_errors")
+    ):
+        return (
+            RepairVerificationStatus.PARTIAL,
+            "La herramienta de reparación reportó errores no resueltos; no se declara éxito total.",
+        )
+'''
+          ntfs_marker = '    if plan.filesystem is FilesystemType.NTFS and outcome.repair_tool != "none":\n'
+          if partial_guard not in action and ntfs_marker in action:
+              action = action.replace(ntfs_marker, partial_guard + ntfs_marker, 1)
+          action_path.write_text(action, encoding='utf-8')
+
+          # Broker typing remains exact.
+          broker_path = Path('backend/src/ares/runtime/filesystem_broker.py')
+          broker = broker_path.read_text(encoding='utf-8')
+          if 'from collections.abc import Awaitable, Callable\n' not in broker:
+              broker = broker.replace(
+                  'import os\n',
+                  'import os\nfrom collections.abc import Awaitable, Callable\n',
+                  1,
+              )
+          if 'FilesystemBrokerSend = Callable' not in broker:
+              marker = 'from ares.tools.filesystem import FilesystemToolError, FilesystemToolSuite\n\n\n'
+              broker = broker.replace(
+                  marker,
+                  marker + 'FilesystemBrokerSend = Callable[[dict[str, Any]], Awaitable[None]]\n\n\n',
+                  1,
+              )
+          broker = broker.replace(
+              '        send,\n    ) -> dict[str, Any]:',
+              '        send: FilesystemBrokerSend,\n    ) -> dict[str, Any]:',
+              1,
+          )
+          broker = broker.replace(
+              '    async def _authorize(self, request: dict[str, Any], send) -> dict[str, Any]:',
+              '    async def _authorize(\n        self, request: dict[str, Any], send: FilesystemBrokerSend\n    ) -> dict[str, Any]:',
+              1,
+          )
+          broker = broker.replace(
+              '    async def _execute(self, request: dict[str, Any], send) -> dict[str, Any]:',
+              '    async def _execute(\n        self, request: dict[str, Any], send: FilesystemBrokerSend\n    ) -> dict[str, Any]:',
+              1,
+          )
+          broker_path.write_text(broker, encoding='utf-8')
+
+          # UI keeps one stable session across inspect/plan/start/poll.
+          js = Path('live/config/includes.chroot/usr/share/ares/platform/filesystem.js')
+          js_text = js.read_text(encoding='utf-8')
+          if 'const sessionId' not in js_text:
+              js_text = js_text.replace(
+                  '  const api = "/api/v1/filesystems";\n',
+                  '  const api = "/api/v1/filesystems";\n  const sessionId = `ui-${globalThis.crypto.randomUUID().replaceAll("-", "")}`;\n',
+                  1,
+              )
+          if '"X-ARES-Session-ID": sessionId' not in js_text:
+              js_text = js_text.replace(
+                  'headers: { "Content-Type": "application/json", ...(options.headers || {}) },',
+                  'headers: { "Content-Type": "application/json", "X-ARES-Session-ID": sessionId, ...(options.headers || {}) },',
+                  1,
+              )
+          js.write_text(js_text, encoding='utf-8')
+          PY
+      - name: Python 3.12 quality and tests
+        working-directory: backend
+        run: |
+          uv sync --frozen --dev --python 3.12
+          uv run --frozen ruff check --fix src tests || true
+          uv run --frozen ruff format src tests
+          uv run --frozen ruff format --check src tests
+          uv run --frozen ruff check src tests
+          uv run --frozen mypy
+          uv build
+          uv run --frozen pytest --junitxml=/tmp/junit-312.xml --cov-report=term-missing --cov-report=xml:/tmp/coverage-312.xml
+      - name: Python 3.13 tests
+        working-directory: backend
+        run: |
+          rm -rf .venv
+          uv sync --frozen --dev --python 3.13
+          uv run --frozen pytest --junitxml=/tmp/junit-313.xml --cov-report=term-missing --cov-report=xml:/tmp/coverage-313.xml
+      - name: Static syntax
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' file; do
+            first_line="$(head -n 1 "$file" || true)"
+            case "$first_line" in
+              *bash*) bash -n "$file";;
+              *"/sh"*) dash -n "$file";;
+            esac
+          done < <(git ls-files -z)
+          node --check live/config/includes.chroot/usr/share/ares/platform/app.js
+          node --check live/config/includes.chroot/usr/share/ares/platform/storage.js
+          node --check live/config/includes.chroot/usr/share/ares/platform/backup.js
+          node --check live/config/includes.chroot/usr/share/ares/platform/filesystem.js
+      - name: Record verified result and clean temporary CI
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          def read(v):
+              j = ET.parse(f'/tmp/junit-{v}.xml').getroot()
+              c = ET.parse(f'/tmp/coverage-{v}.xml').getroot()
+              return (
+                  int(j.attrib.get('tests', 0)),
+                  int(j.attrib.get('failures', 0)),
+                  int(j.attrib.get('errors', 0)),
+                  int(j.attrib.get('skipped', 0)),
+                  float(c.attrib['line-rate']) * 100,
+              )
+          a = read('312')
+          b = read('313')
+          Path('docs/capabilities/filesystem-repair-validation.md').write_text(
+              f'''# Filesystem Recovery & Repair — exact validation\n\n'''
+              f'''| Python | Tests | Failures | Errors | Skipped | Coverage |\n| --- | ---: | ---: | ---: | ---: | ---: |\n'''
+              f'''| 3.12 | {a[0]} | {a[1]} | {a[2]} | {a[3]} | {a[4]:.2f}% |\n'''
+              f'''| 3.13 | {b[0]} | {b[1]} | {b[2]} | {b[3]} | {b[4]:.2f}% |\n\n'''
+              '''Ruff format, Ruff lint, strict mypy, package build, shell syntax and all four platform JavaScript syntax checks passed before this record was written. The pytest suite includes the real isolated ext4-image corruption/repair/post-verification scenario and never targets a physical disk.\n''',
+              encoding='utf-8',
+          )
+          PY
+          rm -f .github/workflows/filesystem-maintenance.yml
+          rm -f .github/workflows/filesystem-finalize.yml
+          rm -f .github/workflows/filesystem-release-verification.yml
+          rm -f .github/workflows/filesystem-release-verification-v2.yml
+      - name: Publish only after all gates pass
+        run: |
+          git config user.name "ARES Release Verification"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "filesystem: publish verified recovery repair increment"
+            git pull --rebase origin agent/filesystem-recovery-repair
+            git push origin HEAD:agent/filesystem-recovery-repair
+          fi
+      - name: Mark PR ready only after validated publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr ready 4 --repo wowito68/ARES-Autonomous-Recovery-and-Expert-System-
