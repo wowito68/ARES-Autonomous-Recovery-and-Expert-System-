@@ -159,9 +159,7 @@ class CapabilityManager:
             if (descriptor := self.descriptor(capability_id, version=version)) is not None
         )
 
-    def get(
-        self, capability_id: str, *, version: str | None = None
-    ) -> CapabilityMetadata | None:
+    def get(self, capability_id: str, *, version: str | None = None) -> CapabilityMetadata | None:
         descriptor = self.descriptor(capability_id, version=version)
         return descriptor.metadata if descriptor is not None else None
 
