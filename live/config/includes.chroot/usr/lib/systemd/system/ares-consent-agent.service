@@ -1,19 +1,24 @@
 [Unit]
 Description=ARES trusted local consent agent
-ConditionFileIsExecutable=/opt/ares/consent/bin/ares-consent-agent
-Requires=ares-audit.service
-After=ares-audit.service systemd-user-sessions.service
+Requires=ares-audit.socket
+After=ares-audit.socket systemd-user-sessions.service
 
 [Service]
-Type=notify
+Type=simple
 User=ares-consent
 Group=ares-consent
-ExecStart=/opt/ares/consent/bin/ares-consent-agent
+Environment=PYTHONPATH=/opt/ares/backend/src
+ExecStart=/usr/bin/python3 -m ares.runtime.entrypoints consent
 Restart=on-failure
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
 CapabilityBoundingSet=
-ReadWritePaths=/var/lib/ares/consent /run/ares/sockets
+ReadWritePaths=/run/ares/sockets
 IPAddressDeny=any
