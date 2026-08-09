@@ -166,9 +166,9 @@ def build_storage_snapshot(evidence: StorageEvidence, session_id: str) -> System
     for device in evidence.devices:
         if device.device_type != "disk":
             continue
-        disk_id = _resource_id("disk", device.hardware_identity or device.path)
+        disk_resource_id = _resource_id("disk", device.hardware_identity or device.path)
         disks_by_path[device.path] = DiskSnapshot(
-            id=disk_id,
+            id=disk_resource_id,
             name=device.name,
             path=device.path,
             size_bytes=device.size_bytes,
