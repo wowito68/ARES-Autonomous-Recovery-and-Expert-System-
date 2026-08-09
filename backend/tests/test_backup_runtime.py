@@ -21,13 +21,14 @@ from ares.backup import (
     UnixBrokerBackupExecutor,
 )
 from ares.backup.executor import BackupExecutorError
-from ares.backup.models import BackupPolicy
+from ares.backup.models import BackupPlan, BackupPolicy
 from ares.runtime.broker import BackupBroker
 from ares.runtime.consent import ConsentAuthority
 from ares.tools.backup import BackupFilesystemTools, BackupToolError
 
 
-def _fixture_plan(tmp_path: Path):
+def _fixture_plan(tmp_path: Path) -> tuple[BackupFilesystemTools, BackupPlan]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     source = tmp_path / "source"
     destination = tmp_path / "destination"
     source.mkdir()
@@ -45,7 +46,7 @@ def _fixture_plan(tmp_path: Path):
     return tools, tools.build_plan(str(source), str(destination), BackupPolicy())
 
 
-def _backup(plan) -> Backup:
+def _backup(plan: BackupPlan) -> Backup:
     progress = BackupProgress(
         files_completed=plan.included_file_count,
         files_total=plan.included_file_count,
@@ -73,7 +74,9 @@ def _backup(plan) -> Backup:
     )
 
 
-async def test_local_executor_requires_and_consumes_exact_one_use_grant(tmp_path: Path) -> None:
+async def test_local_executor_requires_and_consumes_exact_one_use_grant(
+    tmp_path: Path,
+) -> None:
     tools, plan = _fixture_plan(tmp_path)
     executor = LocalTestBackupExecutor(tools)
     challenges: list[str] = []
@@ -85,7 +88,7 @@ async def test_local_executor_requires_and_consumes_exact_one_use_grant(tmp_path
         plan, session_id="runtime-session-123", on_challenge=challenge
     )
 
-    async def noop(_) -> None:
+    async def noop(_: Any) -> None:
         return None
 
     manifest = await executor.create(plan, grant, on_progress=noop, on_entry=noop)
@@ -108,12 +111,18 @@ async def test_local_executor_can_deny_authorization(tmp_path: Path) -> None:
         )
 
 
-async def test_consent_authority_requires_exact_phrase_and_independent_uids(tmp_path: Path) -> None:
+async def test_consent_authority_requires_exact_phrase_and_independent_uids(
+    tmp_path: Path,
+) -> None:
     _, plan = _fixture_plan(tmp_path)
     audit = MemoryAuditLedger()
     authority = ConsentAuthority(audit, broker_uid=41, operator_uid=42)
     created = await authority.dispatch(
-        {"action": "create", "plan": plan.model_dump(mode="json"), "session_id": "consent-session-123"},
+        {
+            "action": "create",
+            "plan": plan.model_dump(mode="json"),
+            "session_id": "consent-session-123",
+        },
         41,
     )
     challenge_id = created["challenge_id"]
@@ -127,14 +136,26 @@ async def test_consent_authority_requires_exact_phrase_and_independent_uids(tmp_
         await authority.dispatch({"action": "get", "challenge_id": challenge_id}, 41)
     with pytest.raises(ValueError, match="exact confirmation"):
         await authority.dispatch(
-            {"action": "approve", "challenge_id": challenge_id, "confirmation": "wrong"}, 42
+            {
+                "action": "approve",
+                "challenge_id": challenge_id,
+                "confirmation": "wrong",
+            },
+            42,
         )
 
     phrase = created["confirmation_phrase"]
     approved = await authority.dispatch(
-        {"action": "approve", "challenge_id": challenge_id, "confirmation": phrase}, 42
+        {
+            "action": "approve",
+            "challenge_id": challenge_id,
+            "confirmation": phrase,
+        },
+        42,
     )
-    waited = await authority.dispatch({"action": "wait", "challenge_id": challenge_id}, 41)
+    waited = await authority.dispatch(
+        {"action": "wait", "challenge_id": challenge_id}, 41
+    )
     assert approved["decision"] == "approved"
     assert waited["decision"] == "approved"
     assert {record["event_type"] for record in audit.records} >= {
@@ -147,7 +168,11 @@ async def test_consent_authority_can_deny(tmp_path: Path) -> None:
     _, plan = _fixture_plan(tmp_path)
     authority = ConsentAuthority(MemoryAuditLedger(), broker_uid=1, operator_uid=2)
     created = await authority.dispatch(
-        {"action": "create", "plan": plan.model_dump(mode="json"), "session_id": "consent-session-456"},
+        {
+            "action": "create",
+            "plan": plan.model_dump(mode="json"),
+            "session_id": "consent-session-456",
+        },
         1,
     )
     denied = await authority.dispatch(
@@ -223,7 +248,7 @@ class _ApprovedConsent:
     def __init__(self) -> None:
         self.challenge_id = "challenge-12345678"
 
-    async def request(self, plan, session_id: str) -> dict[str, Any]:
+    async def request(self, plan: BackupPlan, session_id: str) -> dict[str, Any]:
         del plan, session_id
         return {"challenge_id": self.challenge_id}
 
@@ -251,7 +276,11 @@ async def test_broker_revalidates_audits_and_consumes_grant(tmp_path: Path) -> N
         messages.append(message)
 
     grant_payload = await broker.dispatch(
-        {"action": "authorize", "plan": plan.model_dump(mode="json"), "session_id": "broker-session-123"},
+        {
+            "action": "authorize",
+            "plan": plan.model_dump(mode="json"),
+            "session_id": "broker-session-123",
+        },
         77,
         send,
     )
@@ -259,7 +288,11 @@ async def test_broker_revalidates_audits_and_consumes_grant(tmp_path: Path) -> N
     assert grant_payload["session_id"] == "broker-session-123"
 
     manifest_payload = await broker.dispatch(
-        {"action": "create", "plan": plan.model_dump(mode="json"), "grant": grant_payload},
+        {
+            "action": "create",
+            "plan": plan.model_dump(mode="json"),
+            "grant": grant_payload,
+        },
         77,
         send,
     )
@@ -273,7 +306,11 @@ async def test_broker_revalidates_audits_and_consumes_grant(tmp_path: Path) -> N
     }
     with pytest.raises(BackupToolError, match="BACKUP_AUTHORIZATION_INVALID"):
         await broker.dispatch(
-            {"action": "create", "plan": plan.model_dump(mode="json"), "grant": grant_payload},
+            {
+                "action": "create",
+                "plan": plan.model_dump(mode="json"),
+                "grant": grant_payload,
+            },
             77,
             send,
         )
@@ -296,12 +333,22 @@ async def test_broker_verifies_completed_backup(tmp_path: Path) -> None:
         return None
 
     grant = await broker.dispatch(
-        {"action": "authorize", "plan": plan.model_dump(mode="json"), "session_id": "broker-session-456"},
+        {
+            "action": "authorize",
+            "plan": plan.model_dump(mode="json"),
+            "session_id": "broker-session-456",
+        },
         7,
         send,
     )
     manifest = await broker.dispatch(
-        {"action": "create", "plan": plan.model_dump(mode="json"), "grant": grant}, 7, send
+        {
+            "action": "create",
+            "plan": plan.model_dump(mode="json"),
+            "grant": grant,
+        },
+        7,
+        send,
     )
     verification = await broker.dispatch(
         {
@@ -316,7 +363,7 @@ async def test_broker_verifies_completed_backup(tmp_path: Path) -> None:
 
 
 async def test_backup_store_reconciles_interrupted_record(tmp_path: Path) -> None:
-    tools, plan = _fixture_plan(tmp_path)
+    _, plan = _fixture_plan(tmp_path)
     store = BackupStore(tmp_path / "store")
     store.prepare()
     progress = BackupProgress(
