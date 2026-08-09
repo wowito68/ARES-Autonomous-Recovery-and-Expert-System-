@@ -244,6 +244,8 @@ class CapabilityManager:
             and metadata.operation is not OperationClass.OBSERVE
         ):
             raise ValueError("read-only capabilities must use observe operation class")
+        if metadata.requires_authorization and metadata.mode is not CapabilityMode.MUTATING:
+            raise ValueError("only mutating capabilities may require authorization")
         if (
             metadata.requires_protection_checkpoint
             and metadata.mode is not CapabilityMode.MUTATING
@@ -316,6 +318,18 @@ class CapabilityManager:
         session_id = getattr(payload, "session_id", None)
         if isinstance(session_id, str) and checkpoint.session_id != session_id:
             raise PermissionError("protection checkpoint belongs to another session")
+        resource_id = getattr(payload, "protected_resource_id", None)
+        resource_fingerprint = getattr(
+            payload, "protected_resource_fingerprint_sha256", None
+        )
+        if isinstance(resource_id, str):
+            if resource_id not in checkpoint.protected_resources:
+                raise PermissionError("protection checkpoint protects another resource")
+            if (
+                isinstance(resource_fingerprint, str)
+                and checkpoint.resource_fingerprints.get(resource_id) != resource_fingerprint
+            ):
+                raise PermissionError("protection checkpoint fingerprint does not match target")
 
     def _validate_compatibility(
         self,
