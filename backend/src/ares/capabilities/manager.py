@@ -194,6 +194,7 @@ class CapabilityManager:
         payload: dict[str, Any],
         *,
         version: str | None = None,
+        execution_id: str | None = None,
     ) -> WorkflowExecution:
         """Validate typed input, run the private workflow and validate typed output."""
 
@@ -206,7 +207,7 @@ class CapabilityManager:
         validated = capability.input_model.model_validate(payload)
         definition = capability.build_workflow(validated)
         self._validate_workflow_contract(capability.metadata, definition)
-        execution = await self.workflow_engine.execute(definition)
+        execution = await self.workflow_engine.execute(definition, execution_id=execution_id)
         if execution.status is not ExecutionStatus.SUCCEEDED or execution.result is None:
             return execution
         validated_output = capability.output_model.model_validate(execution.result)

@@ -80,7 +80,7 @@ class WorkflowStep:
     def __post_init__(self) -> None:
         if not self.id or len(self.id) > 96:
             raise ValueError("workflow step id is invalid")
-        if not 0 < self.timeout_seconds <= 300:
+        if not 0 < self.timeout_seconds <= 86_400:
             raise ValueError("workflow step timeout is invalid")
         if self.retry.max_attempts > 1 and not self.action.idempotent:
             raise ValueError("only idempotent actions may be retried")

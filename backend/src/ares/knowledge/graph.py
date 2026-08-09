@@ -18,7 +18,7 @@ _MAX_GRAPH_BYTES = 8_000_000
 
 
 class GraphKind(StrEnum):
-    """Node types supported by the first ARES v2 schema."""
+    """Node types supported by the ARES v2 schema."""
 
     SYSTEM = "system"
     HARDWARE = "hardware"
@@ -31,6 +31,11 @@ class GraphKind(StrEnum):
     MOUNT_POINT = "mount_point"
     SMART_STATUS = "smart_status"
     OPERATING_SYSTEM = "operating_system"
+    BACKUP_SOURCE = "backup_source"
+    BACKUP = "backup"
+    BACKUP_DESTINATION = "backup_destination"
+    BACKUP_ENTRY = "backup_entry"
+    BACKUP_VERIFICATION = "backup_verification"
     KERNEL = "kernel"
     DRIVER = "driver"
     SERVICE = "service"
