@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -14,11 +13,9 @@ from pydantic import BaseModel, ConfigDict
 
 import ares.cli as cli_module
 from ares.backup import (
-    BackupCreateRequest,
     BackupPlan,
-    BackupPlanRequest,
+    BackupPolicy,
     BackupService,
-    BackupStatus,
     LocalTestBackupExecutor,
     UnixBrokerBackupExecutor,
 )
@@ -92,6 +89,7 @@ async def test_api_cancel_stops_running_backup(
 
     response = await client.post(f"/api/v1/backups/{backup_id}/cancel")
     assert response.status_code == 200
+    payload: dict[str, Any] = {}
     for _ in range(50):
         current = await client.get(f"/api/v1/backups/{backup_id}")
         payload = cast(dict[str, Any], current.json())
@@ -149,7 +147,7 @@ async def test_unix_broker_executor_reports_response_timeout(tmp_path: Path) -> 
         f"37 25 99:99 / {destination} rw - ext4 /dev/sdb1 rw\n",
         encoding="utf-8",
     )
-    plan = tools.build_plan(str(source), str(destination), __import__("ares.backup.models", fromlist=["BackupPolicy"]).BackupPolicy())
+    plan = tools.build_plan(str(source), str(destination), BackupPolicy())
 
     async def slow(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         await reader.readline()

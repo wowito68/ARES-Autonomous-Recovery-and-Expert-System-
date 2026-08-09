@@ -27,9 +27,7 @@ BrokerSend = Callable[[dict[str, Any]], Awaitable[None]]
 class ConsentClient(Protocol):
     async def request(self, plan: BackupPlan, session_id: str) -> dict[str, Any]: ...
 
-    async def wait(
-        self, challenge_id: str, timeout_seconds: float = 600.0
-    ) -> dict[str, Any]: ...
+    async def wait(self, challenge_id: str, timeout_seconds: float = 600.0) -> dict[str, Any]: ...
 
 
 class BackupBroker:
@@ -69,9 +67,7 @@ class BackupBroker:
             return await self._verify(request)
         raise BackupToolError("BACKUP_BROKER_ACTION_REJECTED")
 
-    async def _authorize(
-        self, request: dict[str, Any], send: BrokerSend
-    ) -> dict[str, Any]:
+    async def _authorize(self, request: dict[str, Any], send: BrokerSend) -> dict[str, Any]:
         plan = BackupPlan.model_validate(request.get("plan"))
         session_id = request.get("session_id")
         if not isinstance(session_id, str) or len(session_id) < 8:
@@ -127,12 +123,9 @@ class BackupBroker:
         )
         return grant.model_dump(mode="json")
 
-    async def _create(
-        self, request: dict[str, Any], send: BrokerSend
-    ) -> dict[str, Any]:
+    async def _create(self, request: dict[str, Any], send: BrokerSend) -> dict[str, Any]:
         plan = BackupPlan.model_validate(request.get("plan"))
         grant = AuthorizationGrant.model_validate(request.get("grant"))
-        await asyncio.to_thread(self.tools.revalidate_plan, plan)
         async with self._lock:
             stored = self._grants.pop(grant.id, None)
         if (
@@ -143,6 +136,7 @@ class BackupBroker:
             or grant.plan_fingerprint_sha256 != plan.fingerprint_sha256
         ):
             raise BackupToolError("BACKUP_AUTHORIZATION_INVALID")
+        await asyncio.to_thread(self.tools.revalidate_plan, plan)
         session_id = grant.session_id
         await self.audit.append(
             event_type="backup.execution.intent",
@@ -275,9 +269,7 @@ async def serve_tool_broker(
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         async def send(message: dict[str, Any]) -> None:
-            encoded = json.dumps(
-                message, ensure_ascii=False, separators=(",", ":")
-            ).encode("utf-8")
+            encoded = json.dumps(message, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
             if len(encoded) > _MAX_RESPONSE_BYTES:
                 raise BackupToolError("BACKUP_BROKER_RESPONSE_TOO_LARGE")
             writer.write(encoded + b"\n")
