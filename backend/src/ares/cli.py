@@ -12,13 +12,13 @@ from uuid import uuid4
 from ares.backup import BackupCreateRequest, BackupPlanRequest, BackupService, BackupServiceError
 from ares.backup.models import BackupStatus
 from ares.config import get_settings
-from ares.filesystems import (
+from ares.filesystems.models import RepairExecutionStatus
+from ares.filesystems.service import (
     FilesystemInspectRequest,
     FilesystemRepairPlanRequest,
     FilesystemRepairService,
     FilesystemRepairStartRequest,
     FilesystemServiceError,
-    RepairExecutionStatus,
 )
 from ares.main import create_app
 from ares.runtime.consent import UnixConsentOperatorClient
