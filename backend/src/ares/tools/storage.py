@@ -323,19 +323,25 @@ class StorageToolSuite:
     ) -> tuple[ToolAvailability, ProcessResult | None]:
         state = self.runner.inspect(tool)
         if not state.available:
-            await _tool_event(event_bus, correlation_id, "tool.execution.completed", tool, state.reason)
+            await _tool_event(
+                event_bus, correlation_id, "tool.execution.completed", tool, state.reason
+            )
             return state, None
         await _tool_event(event_bus, correlation_id, "tool.execution.started", tool, None)
         try:
             result = await self.runner.run(tool, args, timeout=timeout)
         except TimeoutError:
             state = ToolAvailability(tool=tool, available=False, reason="timeout")
-            await _tool_event(event_bus, correlation_id, "tool.execution.completed", tool, "timeout")
+            await _tool_event(
+                event_bus, correlation_id, "tool.execution.completed", tool, "timeout"
+            )
             return state, None
         except (FileNotFoundError, PermissionError, OSError, ValueError) as exc:
             reason = str(exc) or "command_failed"
             state = ToolAvailability(tool=tool, available=False, reason=reason[:64])
-            await _tool_event(event_bus, correlation_id, "tool.execution.completed", tool, state.reason)
+            await _tool_event(
+                event_bus, correlation_id, "tool.execution.completed", tool, state.reason
+            )
             return state, None
         reason = None if result.exit_code == 0 else "command_failed"
         await _tool_event(event_bus, correlation_id, "tool.execution.completed", tool, reason)
@@ -402,14 +408,16 @@ def parse_lsblk_json(text: str) -> tuple[BlockDeviceProbe, ...]:
     return tuple(output)
 
 
-def _append_lsblk_device(
-    raw: object, output: list[BlockDeviceProbe], parent: str | None
-) -> None:
+def _append_lsblk_device(raw: object, output: list[BlockDeviceProbe], parent: str | None) -> None:
     if not isinstance(raw, dict) or len(output) >= 512:
         return
     path = raw.get("path")
     name = raw.get("name")
-    if not isinstance(path, str) or _SAFE_DEVICE.fullmatch(path) is None or not isinstance(name, str):
+    if (
+        not isinstance(path, str)
+        or _SAFE_DEVICE.fullmatch(path) is None
+        or not isinstance(name, str)
+    ):
         return
     identity_parts = [raw.get("wwn"), raw.get("serial"), raw.get("model"), path]
     identity = _identity_hash(tuple(item for item in identity_parts if isinstance(item, str)))
@@ -593,9 +601,7 @@ def parse_smartctl_json(text: str, device: str) -> SmartProbe:
     return SmartProbe(device=device, status=status, passed=passed, temperature_celsius=temp)
 
 
-def detect_operating_systems(
-    mounts: tuple[MountProbe, ...],
-) -> tuple[OperatingSystemProbe, ...]:
+def detect_operating_systems(mounts: tuple[MountProbe, ...]) -> tuple[OperatingSystemProbe, ...]:
     output: list[OperatingSystemProbe] = []
     seen: set[tuple[str, str]] = set()
     for mount in mounts[:128]:
@@ -632,7 +638,7 @@ def _parse_os_release(text: str) -> dict[str, str]:
     for line in text.splitlines()[:128]:
         key, separator, value = line.partition("=")
         if separator and re.fullmatch(r"[A-Z0-9_]+", key):
-            values[key] = value.strip().strip('"\'')[:512]
+            values[key] = value.strip().strip("\"'")[:512]
     return values
 
 
