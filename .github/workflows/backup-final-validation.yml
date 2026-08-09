@@ -1,0 +1,150 @@
+name: Backup final validation
+
+on:
+  push:
+    branches:
+      - agent/backup-snapshot-manager
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+
+jobs:
+  validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/backup-snapshot-manager
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.11.14"
+          python-version: "3.12"
+          working-directory: backend
+
+      - name: Require final architecture artifacts
+        run: |
+          set -euo pipefail
+          git pull --ff-only origin agent/backup-snapshot-manager
+          grep -q "Backup & Snapshot Manager increment" docs/architecture.md
+          grep -q "Backup mutation security" docs/security.md
+          grep -q "Backup API" docs/api.md
+          grep -q "ProtectionCheckpoint" docs/capabilities/backup.md
+          grep -q 'script src="/backup.js"' live/config/includes.chroot/usr/share/ares/platform/index.html
+          grep -q "ruff format --check src tests" .github/workflows/backend-ci.yml
+
+      - name: Install locked dependencies
+        working-directory: backend
+        run: uv sync --frozen --dev
+
+      - name: Enforce formatter, Ruff, mypy and package build
+        working-directory: backend
+        run: |
+          uv run --frozen ruff format --check src tests
+          uv run --frozen ruff check src tests
+          uv run --frozen mypy
+          uv build
+
+      - name: Run full Python 3.12 suite and capture coverage
+        working-directory: backend
+        run: >-
+          uv run --frozen pytest
+          --junitxml=backup-final-junit.xml
+          --cov-report=term-missing
+          --cov-report=json:backup-final-coverage.json
+
+      - name: Validate frontend JavaScript
+        run: |
+          node --check live/config/includes.chroot/usr/share/ares/platform/app.js
+          node --check live/config/includes.chroot/usr/share/ares/platform/storage.js
+          node --check live/config/includes.chroot/usr/share/ares/platform/backup.js
+
+      - name: Write validation record and remove temporary workflows
+        shell: python
+        run: |
+          from pathlib import Path
+          import json
+          import xml.etree.ElementTree as ET
+
+          coverage = json.loads(Path("backend/backup-final-coverage.json").read_text())
+          percent = coverage["totals"]["percent_covered"]
+          root = ET.parse("backend/backup-final-junit.xml").getroot()
+          tests = int(root.attrib.get("tests", 0))
+          failures = int(root.attrib.get("failures", 0))
+          errors = int(root.attrib.get("errors", 0))
+          skipped = int(root.attrib.get("skipped", 0))
+          Path("docs/capabilities/backup-validation-result.md").write_text(
+              "# Backup final validation\n\n"
+              "This record is generated only after the backup slice passes its pre-commit "
+              "strict validation on Python 3.12. The workflow then removes itself and "
+              "dispatches the repository's normal Backend CI on the exact resulting SHA, "
+              "including Python 3.13.\n\n"
+              f"- Tests collected/executed: {tests}\n"
+              f"- Failures: {failures}\n"
+              f"- Errors: {errors}\n"
+              f"- Skipped: {skipped}\n"
+              f"- Global line coverage: {percent:.2f}%\n"
+              "- Ruff format: passed\n"
+              "- Ruff lint: passed\n"
+              "- strict mypy: passed\n"
+              "- package build: passed\n"
+              "- frontend JavaScript syntax: passed\n\n"
+              "The authoritative cross-version result is the exact-head Backend CI run "
+              "associated with this PR.\n",
+              encoding="utf-8",
+          )
+
+      - name: Commit validated tree without temporary workflows
+        run: |
+          set -euo pipefail
+          git rm -f --ignore-unmatch .github/workflows/backup-*.yml
+          git add docs/capabilities/backup-validation-result.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "test: record validated backup slice"
+          git pull --rebase origin agent/backup-snapshot-manager
+          git push origin HEAD:agent/backup-snapshot-manager
+          echo "FINAL_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Dispatch Backend CI on exact final SHA
+        run: |
+          set -euo pipefail
+          gh workflow run backend-ci.yml --ref agent/backup-snapshot-manager
+          for attempt in $(seq 1 30); do
+            run_id="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/workflows/backend-ci.yml/runs?branch=agent%2Fbackup-snapshot-manager&event=workflow_dispatch&per_page=20" --jq ".workflow_runs[] | select(.head_sha == \"${FINAL_SHA}\") | .id" | head -n 1)"
+            if [ -n "$run_id" ]; then
+              echo "FINAL_RUN_ID=$run_id" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Unable to resolve exact-head Backend CI run." >&2
+          exit 1
+
+      - name: Wait for exact-head Backend CI
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 120); do
+            status="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${FINAL_RUN_ID}" --jq '.status')"
+            conclusion="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${FINAL_RUN_ID}" --jq '.conclusion // ""')"
+            echo "Backend CI status=$status conclusion=$conclusion"
+            if [ "$status" = "completed" ]; then
+              [ "$conclusion" = "success" ]
+              exit $?
+            fi
+            sleep 5
+          done
+          echo "Exact-head Backend CI timed out." >&2
+          exit 1
+
+      - name: Mark PR ready only after exact-head success
+        run: |
+          gh pr ready 3
+          gh pr comment 3 --body "Backup & Snapshot Manager final validation passed on exact head \`${FINAL_SHA}\`. Backend CI run: ${FINAL_RUN_ID}. The generated validation record contains the Python 3.12 test count and coverage; Backend CI also validated Python 3.13, strict mypy, Ruff, build, shell and UI syntax."
