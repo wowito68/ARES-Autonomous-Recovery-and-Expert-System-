@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import tempfile
+from contextlib import suppress
 from pathlib import Path
 
 from ares.storage.models import SystemStorageSnapshot
@@ -71,10 +72,8 @@ class StorageSnapshotStore:
             os.chmod(temporary, 0o600)
             os.replace(temporary, self.directory / f"{snapshot.id}.json")
         finally:
-            try:
+            with suppress(FileNotFoundError):
                 os.unlink(temporary)
-            except FileNotFoundError:
-                pass
 
 
 def _safe_id(value: str) -> bool:
