@@ -357,10 +357,8 @@ class StorageToolSuite:
                 event_bus, correlation_id, "tool.execution.completed", tool, state.reason
             )
             return state, None
-        if result.exit_code == 0:
-            result_reason = None
-        else:
-            result_reason = "command_failed"
+        result_reason: str | None
+        result_reason = None if result.exit_code == 0 else "command_failed"
         await _tool_event(
             event_bus,
             correlation_id,
