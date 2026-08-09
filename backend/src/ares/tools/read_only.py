@@ -37,8 +37,14 @@ class ReadOnlyStorageProcessRunner:
             return ToolAvailability(tool=tool, available=False, reason="read_only_policy_rejected")
         return self.delegate.inspect(tool)
 
-    async def run(self, tool: str, args: tuple[str, ...], *, timeout: float) -> ProcessResult:
+    async def run(
+        self,
+        tool: str,
+        args: tuple[str, ...],
+        *,
+        timeout_seconds: float,
+    ) -> ProcessResult:
         expected = _READ_ONLY_INVOCATIONS.get(tool)
         if expected is None or args != expected:
             raise PermissionError("read_only_policy_rejected")
-        return await self.delegate.run(tool, args, timeout=timeout)
+        return await self.delegate.run(tool, args, timeout_seconds=timeout_seconds)
