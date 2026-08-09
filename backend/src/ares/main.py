@@ -21,12 +21,9 @@ from ares.core.problems import install_problem_handlers
 from ares.database import Database
 from ares.diagnostics import DiagnosticStore
 from ares.events import EventBus, JsonlEventSink
-from ares.filesystems import (
-    FilesystemRepairService,
-    FilesystemRepairStore,
-    LocalTestFilesystemExecutor,
-    UnixBrokerFilesystemExecutor,
-)
+from ares.filesystems.executor import LocalTestFilesystemExecutor, UnixBrokerFilesystemExecutor
+from ares.filesystems.service import FilesystemRepairService
+from ares.filesystems.store import FilesystemRepairStore
 from ares.knowledge import KnowledgeGraph
 from ares.llm import AIRuntime, OllamaRuntime
 from ares.planner import Planner
