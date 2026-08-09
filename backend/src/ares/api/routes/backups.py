@@ -7,7 +7,13 @@ from typing import cast
 from fastapi import APIRouter, Request, status
 from pydantic import BaseModel, ConfigDict
 
-from ares.backup.models import Backup, BackupManifest, BackupPlan, BackupVerification
+from ares.backup.models import (
+    Backup,
+    BackupManifest,
+    BackupPlan,
+    BackupVerification,
+    BackupVerifyResult,
+)
 from ares.backup.service import (
     BackupAccepted,
     BackupCreateRequest,
@@ -18,6 +24,9 @@ from ares.backup.service import (
 from ares.core.problems import AresProblem, ProblemDetail
 
 router = APIRouter()
+_PROBLEM_SCHEMA = {
+    "content": {"application/problem+json": {"schema": ProblemDetail.model_json_schema()}}
+}
 
 
 class BackupCollection(BaseModel):
@@ -30,7 +39,7 @@ class BackupCollection(BaseModel):
 @router.post(
     "/plan",
     response_model=BackupPlan,
-    responses={422: {"content": {"application/problem+json": {"schema": ProblemDetail.model_json_schema()}}}},
+    responses={422: _PROBLEM_SCHEMA},
     summary="Generate and persist a structured backup plan without copying data",
 )
 async def plan(payload: BackupPlanRequest, request: Request) -> BackupPlan:
@@ -44,11 +53,7 @@ async def plan(payload: BackupPlanRequest, request: Request) -> BackupPlan:
     "",
     response_model=BackupAccepted,
     status_code=status.HTTP_202_ACCEPTED,
-    responses={
-        404: {"content": {"application/problem+json": {"schema": ProblemDetail.model_json_schema()}}},
-        409: {"content": {"application/problem+json": {"schema": ProblemDetail.model_json_schema()}}},
-        503: {"content": {"application/problem+json": {"schema": ProblemDetail.model_json_schema()}}},
-    },
+    responses={404: _PROBLEM_SCHEMA, 409: _PROBLEM_SCHEMA, 503: _PROBLEM_SCHEMA},
     summary="Request authorization and start backup.create asynchronously",
 )
 async def create(payload: BackupCreateRequest, request: Request) -> BackupAccepted:
@@ -104,6 +109,18 @@ async def verification(backup_id: str, request: Request) -> BackupVerification:
 
 
 @router.post(
+    "/{backup_id}/verify",
+    response_model=BackupVerifyResult,
+    summary="Re-run backup.verify against the stored manifest",
+)
+async def verify(backup_id: str, request: Request) -> BackupVerifyResult:
+    try:
+        return await _service(request).verify(backup_id, session_id=_session(request))
+    except BackupServiceError as exc:
+        raise _problem(exc) from exc
+
+
+@router.post(
     "/{backup_id}/cancel",
     response_model=Backup,
     summary="Request cancellation of a running backup",
@@ -154,5 +171,8 @@ def _problem(exc: BackupServiceError) -> AresProblem:
         status=http_status,
         code=code,
         title=title,
-        detail="ARES rejected the backup operation because a safety precondition was not satisfied.",
+        detail=(
+            "ARES rejected the backup operation because a safety precondition "
+            "was not satisfied."
+        ),
     )
