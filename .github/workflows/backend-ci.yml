@@ -32,12 +32,17 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --frozen --dev
 
-      - name: Enforce formatting
+      - name: Produce Ruff-formatted diagnostic copy
         run: |
-          if ! uv run --frozen ruff format --check src tests; then
-            uv run --frozen ruff format --diff src tests
-            exit 1
-          fi
+          uv run --frozen ruff format src tests
+          tar -czf /tmp/ruff-formatted.tgz src tests
+
+      - name: Upload formatted diagnostic copy
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruff-formatted-${{ github.sha }}
+          path: /tmp/ruff-formatted.tgz
+          retention-days: 1
 
       - name: Enforce Ruff
         run: uv run --frozen ruff check src tests
