@@ -8,6 +8,7 @@ from ares.actions.base import ActionContext, ActionError
 from ares.events import AresEvent
 from ares.knowledge import GraphEdge, GraphKind, GraphNode
 from ares.storage import (
+    GraphUpdateSummary,
     StorageCapabilityResult,
     StorageSnapshotStore,
     SystemStorageSnapshot,
@@ -187,14 +188,14 @@ class ProjectStorageSnapshotAction:
                     },
                 )
             )
-            partition = next(
+            filesystem_partition = next(
                 (item for item in snapshot.partitions if item.path == filesystem.device_path),
                 None,
             )
-            if partition is not None:
+            if filesystem_partition is not None:
                 edges.append(
                     GraphEdge(
-                        source=partition.id,
+                        source=filesystem_partition.id,
                         relation="formatted_as",
                         target=filesystem.id,
                     )
@@ -211,12 +212,14 @@ class ProjectStorageSnapshotAction:
                     },
                 )
             )
-            partition = next(
+            mount_partition = next(
                 (item for item in snapshot.partitions if item.path == mount.source),
                 None,
             )
-            if partition is not None:
-                edges.append(GraphEdge(source=partition.id, relation="mounted_at", target=mount.id))
+            if mount_partition is not None:
+                edges.append(
+                    GraphEdge(source=mount_partition.id, relation="mounted_at", target=mount.id)
+                )
         for os_item in snapshot.operating_systems:
             nodes.append(
                 GraphNode(
@@ -282,10 +285,10 @@ def storage_capability_result(state: dict[str, dict[str, Any]]) -> dict[str, Any
     graph = state["project-knowledge-graph"]
     result = StorageCapabilityResult(
         snapshot=snapshot,
-        knowledge_graph={
-            "revision": graph["revision"],
-            "node_count": graph["node_count"],
-            "edge_count": graph["edge_count"],
-        },
+        knowledge_graph=GraphUpdateSummary(
+            revision=graph["revision"],
+            node_count=graph["node_count"],
+            edge_count=graph["edge_count"],
+        ),
     )
     return result.model_dump(mode="json")
