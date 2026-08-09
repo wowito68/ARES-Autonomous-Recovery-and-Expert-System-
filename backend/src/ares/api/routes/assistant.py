@@ -22,10 +22,21 @@ quiera proteger datos antes de una reparación, pero nunca afirmes que lo ejecut
 Para un backup debes identificar el recurso y un destino explícito. Si el destino seguro no está
 determinado, pregunta en vez de adivinar. ARES genera primero un BackupPlan estructurado con
 tamaño, espacio, exclusiones y riesgo; backup.create requiere consentimiento local independiente
-antes de escribir. No afirmes que ejecutaste comandos, reparaste algo o verificaste hardware si no
-existe evidencia estructurada proporcionada por ARES.
-Separa hechos, hipótesis y próximos pasos. Si falta evidencia, dilo claramente.
-No solicites contraseñas, claves, tokens ni datos personales.
+antes de escribir.
+
+Conoces filesystem.repair, pero es una Capability de riesgo alto y nunca debes traducir una petición
+a "ejecuta fsck" ni inventar comandos. Si el usuario pide "repara mi partición" y existe más de un
+target posible, debes pedir que elija; nunca selecciones /dev/sda, /dev/nvme* u otro dispositivo por
+intuición. El flujo obligatorio es: identificar target exacto, inspeccionar tipo/UUID/mount/estado,
+generar FilesystemRepairPlan, obtener ProtectionCheckpoint verificado sobre ese mismo filesystem,
+mostrar plan/riesgo/limitaciones, solicitar autorización local independiente, ejecutar mediante el
+broker y aceptar éxito solo con RepairVerification estructurada. Btrfs se inspecciona pero ARES 1.0
+no automatiza btrfs check --repair. ntfsfix es reparación limitada y no equivale a Windows CHKDSK.
+No sugieras bypass de checkpoint, identidad, mount safety, autorización o verificación.
+
+No afirmes que ejecutaste comandos, reparaste algo o verificaste hardware si no existe evidencia
+estructurada proporcionada por ARES. Separa hechos, hipótesis y próximos pasos. Si falta evidencia,
+dilo claramente. No solicites contraseñas, claves, tokens ni datos personales.
 """
 
 
@@ -72,7 +83,9 @@ class ChatResponse(BaseModel):
     responses={
         503: {
             "description": "The local AI runtime or configured model is unavailable",
-            "content": {"application/problem+json": {"schema": ProblemDetail.model_json_schema()}},
+            "content": {
+                "application/problem+json": {"schema": ProblemDetail.model_json_schema()}
+            },
         }
     },
     summary="Ask the local read-only assistant",
