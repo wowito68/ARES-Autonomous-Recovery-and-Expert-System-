@@ -7,14 +7,7 @@ from enum import StrEnum
 from typing import Annotated, Any
 from uuid import uuid4
 
-from pydantic import (
-    AliasChoices,
-    BaseModel,
-    ConfigDict,
-    Field,
-    computed_field,
-    model_validator,
-)
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 
 def utc_now() -> datetime:
@@ -33,9 +26,9 @@ class EventSeverity(StrEnum):
 class AresEvent(BaseModel):
     """Immutable event envelope written before it is dispatched.
 
-    Canonical serialized fields follow the vertical-slice envelope while the
-    legacy ``id``/``name``/``occurred_at`` fields remain as computed aliases
-    during the v2 migration so existing journal readers continue to work.
+    Canonical fields follow the v2 envelope. Legacy ``id``/``name``/
+    ``occurred_at`` accessors remain available during migration, while the
+    durable sink explicitly includes those aliases in journal records.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
@@ -106,20 +99,33 @@ class AresEvent(BaseModel):
                 value = {**value, "session_id": correlation_id}
         return value
 
-    @computed_field
+    @property
     def id(self) -> str:
-        """Legacy serialized alias for ``event_id``."""
+        """Legacy accessor for ``event_id``."""
 
         return self.event_id
 
-    @computed_field
+    @property
     def name(self) -> str:
-        """Legacy serialized alias for ``event_type``."""
+        """Legacy accessor for ``event_type``."""
 
         return self.event_type
 
-    @computed_field
+    @property
     def occurred_at(self) -> datetime:
-        """Legacy serialized alias for ``timestamp``."""
+        """Legacy accessor for ``timestamp``."""
 
         return self.timestamp
+
+    def journal_record(self) -> dict[str, Any]:
+        """Return canonical fields plus legacy aliases for durable migration logs."""
+
+        record = self.model_dump(mode="json")
+        record.update(
+            {
+                "id": self.id,
+                "name": self.name,
+                "occurred_at": self.occurred_at.isoformat(),
+            }
+        )
+        return record
