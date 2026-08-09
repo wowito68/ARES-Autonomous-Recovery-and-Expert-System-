@@ -1,0 +1,95 @@
+name: Backup security patch
+
+on:
+  push:
+    branches:
+      - agent/backup-snapshot-manager
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/backup-snapshot-manager
+          fetch-depth: 0
+
+      - name: Apply one-use grant ordering and test hygiene
+        shell: python
+        run: |
+          from pathlib import Path
+
+          broker = Path("backend/src/ares/runtime/broker.py")
+          text = broker.read_text(encoding="utf-8")
+          old = '''        plan = BackupPlan.model_validate(request.get("plan"))
+                  grant = AuthorizationGrant.model_validate(request.get("grant"))
+                  await asyncio.to_thread(self.tools.revalidate_plan, plan)
+                  async with self._lock:
+                      stored = self._grants.pop(grant.id, None)
+                  if (
+                      stored is None
+                      or stored != grant
+                      or grant.expires_at <= datetime.now(UTC)
+                      or grant.plan_id != plan.id
+                      or grant.plan_fingerprint_sha256 != plan.fingerprint_sha256
+                  ):
+                      raise BackupToolError("BACKUP_AUTHORIZATION_INVALID")
+                  session_id = grant.session_id
+          '''
+          old = old.replace("        ", "", 1)
+          new = '''        plan = BackupPlan.model_validate(request.get("plan"))
+                  grant = AuthorizationGrant.model_validate(request.get("grant"))
+                  async with self._lock:
+                      stored = self._grants.pop(grant.id, None)
+                  if (
+                      stored is None
+                      or stored != grant
+                      or grant.expires_at <= datetime.now(UTC)
+                      or grant.plan_id != plan.id
+                      or grant.plan_fingerprint_sha256 != plan.fingerprint_sha256
+                  ):
+                      raise BackupToolError("BACKUP_AUTHORIZATION_INVALID")
+                  await asyncio.to_thread(self.tools.revalidate_plan, plan)
+                  session_id = grant.session_id
+          '''
+          new = new.replace("        ", "", 1)
+          if old not in text:
+              raise RuntimeError("broker grant block not found")
+          broker.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          tests = Path("backend/tests/test_backup_controls.py")
+          text = tests.read_text(encoding="utf-8")
+          text = text.replace("from datetime import UTC, datetime\n", "")
+          text = text.replace(
+              '''    BackupCreateRequest,\n    BackupPlan,\n    BackupPlanRequest,\n    BackupService,\n    BackupStatus,\n    LocalTestBackupExecutor,\n''',
+              '''    BackupPlan,\n    BackupPolicy,\n    BackupService,\n    LocalTestBackupExecutor,\n''',
+          )
+          text = text.replace(
+              'tools.build_plan(str(source), str(destination), __import__("ares.backup.models", fromlist=["BackupPolicy"]).BackupPolicy())',
+              'tools.build_plan(str(source), str(destination), BackupPolicy())',
+          )
+          text = text.replace(
+              '''    response = await client.post(f"/api/v1/backups/{backup_id}/cancel")\n    assert response.status_code == 200\n    for _ in range(50):\n''',
+              '''    response = await client.post(f"/api/v1/backups/{backup_id}/cancel")\n    assert response.status_code == 200\n    payload: dict[str, Any] = {}\n    for _ in range(50):\n''',
+          )
+          tests.write_text(text, encoding="utf-8")
+
+      - name: Format patched Python files
+        working-directory: backend
+        run: |
+          python -m pip install --quiet ruff==0.15.22
+          ruff format src/ares/runtime/broker.py tests/test_backup_controls.py
+
+      - name: Remove this temporary workflow and commit
+        run: |
+          git rm .github/workflows/backup-security-patch.yml
+          git add backend/src/ares/runtime/broker.py backend/tests/test_backup_controls.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "security: consume backup grants before plan revalidation"
+          git push origin HEAD:agent/backup-snapshot-manager
