@@ -9,6 +9,8 @@ import json
 import os
 import socket
 import struct
+from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -16,6 +18,7 @@ from typing import Any, Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 _MAX_AUDIT_MESSAGE_BYTES = 256_000
+UnixHandler = Callable[[asyncio.StreamReader, asyncio.StreamWriter], Awaitable[None]]
 
 
 class AuditReceipt(BaseModel):
@@ -93,17 +96,22 @@ class UnixAuditLedgerClient:
             "session_id": session_id,
             "payload": payload,
         }
-        encoded = json.dumps(request, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        encoded = json.dumps(
+            request, ensure_ascii=False, separators=(",", ":")
+        ).encode("utf-8")
         if len(encoded) > _MAX_AUDIT_MESSAGE_BYTES:
             raise AuditLedgerError("audit message too large")
         try:
             reader, writer = await asyncio.wait_for(
-                asyncio.open_unix_connection(str(self.socket_path)), self.timeout_seconds
+                asyncio.open_unix_connection(str(self.socket_path)),
+                self.timeout_seconds,
             )
             try:
                 writer.write(encoded + b"\n")
                 await writer.drain()
-                line = await asyncio.wait_for(reader.readline(), self.timeout_seconds)
+                line = await asyncio.wait_for(
+                    reader.readline(), self.timeout_seconds
+                )
             finally:
                 writer.close()
                 await writer.wait_closed()
@@ -117,7 +125,9 @@ class UnixAuditLedgerClient:
                 raise ValueError
             return AuditReceipt.model_validate(response.get("receipt"))
         except (ValueError, TypeError) as exc:
-            raise AuditLedgerError("audit writer returned an invalid acknowledgement") from exc
+            raise AuditLedgerError(
+                "audit writer returned an invalid acknowledgement"
+            ) from exc
 
 
 class AuditWriter:
@@ -143,7 +153,10 @@ class AuditWriter:
             self._key = os.urandom(32)
             descriptor = os.open(
                 self.key_path,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0),
+                os.O_WRONLY
+                | os.O_CREAT
+                | os.O_EXCL
+                | getattr(os, "O_CLOEXEC", 0),
                 0o600,
             )
             try:
@@ -162,7 +175,9 @@ class AuditWriter:
         correlation_id = _bounded_string(request.get("correlation_id"), 128)
         session_id = _bounded_string(request.get("session_id"), 128)
         payload = request.get("payload")
-        if not all((event_type, source, correlation_id, session_id)) or not isinstance(payload, dict):
+        if not all((event_type, source, correlation_id, session_id)) or not isinstance(
+            payload, dict
+        ):
             raise ValueError("invalid audit request")
         redacted = _redact_payload(payload)
         async with self._lock:
@@ -188,7 +203,12 @@ class AuditWriter:
             mac = hmac.new(self._key, body_bytes, hashlib.sha256).hexdigest()
             record = {**body, "mac": mac}
             encoded = (
-                json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                json.dumps(
+                    record,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
                 + "\n"
             ).encode("utf-8")
             await asyncio.to_thread(self._append_sync, encoded)
@@ -244,7 +264,10 @@ class AuditWriter:
                 if not hmac.compare_digest(mac, expected):
                     raise OSError("audit ledger MAC invalid")
                 current_sequence = record.get("sequence")
-                if not isinstance(current_sequence, int) or current_sequence != sequence + 1:
+                if (
+                    not isinstance(current_sequence, int)
+                    or current_sequence != sequence + 1
+                ):
                     raise OSError("audit ledger sequence invalid")
                 sequence = current_sequence
                 previous = mac
@@ -260,7 +283,9 @@ async def serve_audit_writer(
     writer = AuditWriter(directory)
     writer.prepare()
 
-    async def handle(reader: asyncio.StreamReader, stream: asyncio.StreamWriter) -> None:
+    async def handle(
+        reader: asyncio.StreamReader, stream: asyncio.StreamWriter
+    ) -> None:
         try:
             line = await asyncio.wait_for(reader.readline(), 3.0)
             if not line or len(line) > _MAX_AUDIT_MESSAGE_BYTES:
@@ -273,7 +298,8 @@ async def serve_audit_writer(
             response = {"ok": True, "receipt": receipt.model_dump(mode="json")}
         except Exception:
             response = {"ok": False}
-        stream.write(json.dumps(response, separators=(",", ":")).encode("utf-8") + b"\n")
+        encoded = json.dumps(response, separators=(",", ":")).encode("utf-8")
+        stream.write(encoded + b"\n")
         try:
             await stream.drain()
         finally:
@@ -289,30 +315,40 @@ def _peer_uid(stream: asyncio.StreamWriter) -> int:
     peer = stream.get_extra_info("socket")
     if peer is None or not hasattr(socket, "SO_PEERCRED"):
         return -1
-    credentials = peer.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+    size = struct.calcsize("3i")
+    credentials = peer.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, size)
     _, uid, _ = struct.unpack("3i", credentials)
     return uid
 
 
-async def _unix_server(handler, socket_path: Path) -> asyncio.AbstractServer:
+async def _unix_server(
+    handler: UnixHandler, socket_path: Path
+) -> asyncio.AbstractServer:
     listen_fds = int(os.environ.get("LISTEN_FDS", "0") or "0")
     listen_pid = int(os.environ.get("LISTEN_PID", "0") or "0")
     if listen_fds >= 1 and listen_pid == os.getpid():
         inherited = socket.socket(fileno=3)
         inherited.setblocking(False)
         return await asyncio.start_unix_server(handler, sock=inherited)
-    socket_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        socket_path.unlink()
-    except FileNotFoundError:
-        pass
+    await asyncio.to_thread(_prepare_socket_path, socket_path)
     server = await asyncio.start_unix_server(handler, path=str(socket_path))
     os.chmod(socket_path, 0o660)
     return server
 
 
+def _prepare_socket_path(socket_path: Path) -> None:
+    socket_path.parent.mkdir(parents=True, exist_ok=True)
+    with suppress(FileNotFoundError):
+        socket_path.unlink()
+
+
 def _bounded_string(value: object, maximum: int) -> str | None:
-    if not isinstance(value, str) or not value or len(value) > maximum or "\x00" in value:
+    if (
+        not isinstance(value, str)
+        or not value
+        or len(value) > maximum
+        or "\x00" in value
+    ):
         return None
     return value
 
@@ -323,12 +359,18 @@ def _redact_payload(value: dict[str, Any]) -> dict[str, Any]:
     for key, item in value.items():
         if key.casefold() in sensitive:
             result[key] = "[REDACTED]"
-        elif isinstance(item, str):
-            result[key] = item[:1024]
-        elif isinstance(item, (bool, int, float)) or item is None:
-            result[key] = item
-        elif isinstance(item, list):
-            result[key] = item[:64]
-        elif isinstance(item, dict):
-            result[key] = _redact_payload(item)
+        else:
+            result[key] = _safe_audit_value(item)
     return result
+
+
+def _safe_audit_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return value[:1024]
+    if isinstance(value, (bool, int, float)) or value is None:
+        return value
+    if isinstance(value, list):
+        return [_safe_audit_value(item) for item in value[:64]]
+    if isinstance(value, dict):
+        return _redact_payload(value)
+    return None
