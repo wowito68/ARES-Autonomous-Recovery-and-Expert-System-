@@ -24,7 +24,12 @@ from ares.capabilities.models import (
     RiskLevel,
     RollbackPolicy,
 )
-from ares.storage import StorageCapabilityResult, StorageSnapshotStore, SystemStorageSnapshot
+from ares.storage import (
+    GraphUpdateSummary,
+    StorageCapabilityResult,
+    StorageSnapshotStore,
+    SystemStorageSnapshot,
+)
 from ares.tools import StorageEvidence, StorageToolSuite
 from ares.workflows import StageMode, WorkflowDefinition, WorkflowStage, WorkflowStep
 from ares.workflows.models import StepOutputs
@@ -251,13 +256,9 @@ class DiskAnalysisPlugin:
 
 def _public_result(state: StepOutputs) -> dict[str, Any]:
     snapshot = SystemStorageSnapshot.model_validate(state["persist-snapshot"])
-    graph = state["project-knowledge-graph"]
+    graph = GraphUpdateSummary.model_validate(state["project-knowledge-graph"])
     result = StorageCapabilityResult(
         snapshot=snapshot,
-        knowledge_graph={
-            "revision": graph.get("revision"),
-            "node_count": graph.get("node_count"),
-            "edge_count": graph.get("edge_count"),
-        },
+        knowledge_graph=graph,
     )
     return result.model_dump(mode="json")
