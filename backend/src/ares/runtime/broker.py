@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from ares.audit.ledger import AuditLedger, AuditLedgerError, UnixAuditLedgerClient
 from ares.backup.models import AuthorizationGrant, Backup, BackupManifest, BackupPlan
+from ares.protection import ProtectionCheckpointStore
 from ares.runtime.consent import UnixConsentClient
 from ares.runtime.filesystem_broker import FilesystemBroker
 from ares.tools.backup import BackupFilesystemTools, BackupToolError
@@ -267,7 +268,12 @@ async def serve_tool_broker(
     audit = UnixAuditLedgerClient(audit_socket)
     consent = UnixConsentClient(consent_socket)
     backup_broker = BackupBroker(BackupFilesystemTools(), audit, consent)
-    filesystem_broker = FilesystemBroker(FilesystemToolSuite(), audit, consent)
+    checkpoint_store = ProtectionCheckpointStore(
+        Path("/var/lib/ares/capabilities/protection/checkpoints")
+    )
+    filesystem_broker = FilesystemBroker(
+        FilesystemToolSuite(), audit, consent, checkpoint_store
+    )
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         async def send(message: dict[str, Any]) -> None:
