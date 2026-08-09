@@ -7,16 +7,18 @@ from typing import cast
 from fastapi import APIRouter, Request, status
 
 from ares.core.problems import AresProblem, ProblemDetail
-from ares.filesystems import (
-    FilesystemInspectRequest,
+from ares.filesystems.models import (
     FilesystemInspection,
     FilesystemRepairPlan,
-    FilesystemRepairPlanRequest,
     FilesystemRepairRecord,
+    RepairVerification,
+)
+from ares.filesystems.service import (
+    FilesystemInspectRequest,
+    FilesystemRepairPlanRequest,
     FilesystemRepairService,
     FilesystemRepairStartRequest,
     FilesystemServiceError,
-    RepairVerification,
 )
 
 router = APIRouter()
