@@ -42,8 +42,14 @@ class FakeRunner:
             return ToolAvailability(tool=tool, available=True)
         return ToolAvailability(tool=tool, available=False, reason="tool_not_installed")
 
-    async def run(self, tool: str, args: tuple[str, ...], *, timeout: float) -> ProcessResult:
-        del timeout
+    async def run(
+        self,
+        tool: str,
+        args: tuple[str, ...],
+        *,
+        timeout_seconds: float,
+    ) -> ProcessResult:
+        del timeout_seconds
         self.calls.append((tool, args))
         failure = self.failures.get(tool)
         if failure is not None:
@@ -336,11 +342,11 @@ async def test_read_only_runner_rejects_device_and_argument_mutation_paths() -> 
     runner = ReadOnlyStorageProcessRunner(delegate)
 
     with pytest.raises(PermissionError, match="read_only_policy_rejected"):
-        await runner.run("smartctl", ("--all", "/dev/sda"), timeout=1)
+        await runner.run("smartctl", ("--all", "/dev/sda"), timeout_seconds=1)
     with pytest.raises(PermissionError, match="read_only_policy_rejected"):
-        await runner.run("lsblk", ("--discard",), timeout=1)
+        await runner.run("lsblk", ("--discard",), timeout_seconds=1)
     with pytest.raises(PermissionError, match="read_only_policy_rejected"):
-        await runner.run("wipefs", ("--all", "/dev/sda"), timeout=1)
+        await runner.run("wipefs", ("--all", "/dev/sda"), timeout_seconds=1)
     assert delegate.calls == []
     assert runner.inspect("wipefs").reason == "read_only_policy_rejected"
 
