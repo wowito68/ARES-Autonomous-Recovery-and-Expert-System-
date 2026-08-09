@@ -7,13 +7,14 @@ import json
 import os
 import socket
 import struct
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from ares.audit.ledger import AuditLedgerError, UnixAuditLedgerClient
+from ares.audit.ledger import AuditLedger, AuditLedgerError, UnixAuditLedgerClient
 from ares.backup.models import BackupPlan
 
 _MAX_MESSAGE_BYTES = 512_000
@@ -28,8 +29,10 @@ class _Challenge:
     source: str
     destination: str
     estimated_bytes: int
+    required_bytes: int
+    available_bytes: int
     file_count: int
-    excluded_count: int
+    exclusions: tuple[dict[str, str], ...]
     expires_at: datetime
     decision: str = "pending"
     event: asyncio.Event = field(default_factory=asyncio.Event)
@@ -42,9 +45,14 @@ class _Challenge:
             "source": self.source,
             "destination": self.destination,
             "estimated_bytes": self.estimated_bytes,
+            "required_bytes": self.required_bytes,
+            "available_bytes": self.available_bytes,
             "file_count": self.file_count,
-            "excluded_count": self.excluded_count,
+            "exclusions": list(self.exclusions),
+            "excluded_count": len(self.exclusions),
             "risk": "medium",
+            "overwrite": False,
+            "verification": "sha256",
             "expires_at": self.expires_at.isoformat(),
             "decision": self.decision,
             "confirmation_phrase": f"APPROVE {self.fingerprint[:12]}",
@@ -54,7 +62,7 @@ class _Challenge:
 class ConsentAuthority:
     def __init__(
         self,
-        audit: UnixAuditLedgerClient,
+        audit: AuditLedger,
         *,
         broker_uid: int = 979,
         operator_uid: int = 1000,
@@ -97,8 +105,16 @@ class ConsentAuthority:
             source=plan.source.path,
             destination=plan.destination.backup_path,
             estimated_bytes=plan.source.estimated_size_bytes,
+            required_bytes=plan.required_bytes,
+            available_bytes=plan.destination.available_bytes,
             file_count=plan.included_file_count,
-            excluded_count=len(plan.exclusions),
+            exclusions=tuple(
+                {
+                    "relative_path": item.relative_path,
+                    "reason": item.reason,
+                }
+                for item in plan.exclusions
+            ),
             expires_at=min(plan.expires_at, datetime.now(UTC) + timedelta(minutes=10)),
         )
         async with self._lock:
@@ -113,6 +129,8 @@ class ConsentAuthority:
                 "plan_id": plan.id,
                 "plan_fingerprint": plan.fingerprint_sha256,
                 "estimated_bytes": plan.source.estimated_size_bytes,
+                "required_bytes": plan.required_bytes,
+                "available_bytes": plan.destination.available_bytes,
                 "file_count": plan.included_file_count,
                 "excluded_count": len(plan.exclusions),
                 "risk": "medium",
@@ -199,15 +217,21 @@ class UnixConsentClient:
     async def request(self, plan: BackupPlan, session_id: str) -> dict[str, Any]:
         return await _request(
             self.socket_path,
-            {"action": "create", "plan": plan.model_dump(mode="json"), "session_id": session_id},
-            timeout=3.0,
+            {
+                "action": "create",
+                "plan": plan.model_dump(mode="json"),
+                "session_id": session_id,
+            },
+            timeout_seconds=3.0,
         )
 
-    async def wait(self, challenge_id: str, timeout: float = 600.0) -> dict[str, Any]:
+    async def wait(
+        self, challenge_id: str, timeout_seconds: float = 600.0
+    ) -> dict[str, Any]:
         return await _request(
             self.socket_path,
             {"action": "wait", "challenge_id": challenge_id},
-            timeout=timeout,
+            timeout_seconds=timeout_seconds,
         )
 
 
@@ -219,7 +243,9 @@ class UnixConsentOperatorClient:
 
     async def get(self, challenge_id: str) -> dict[str, Any]:
         return await _request(
-            self.socket_path, {"action": "get", "challenge_id": challenge_id}, timeout=3.0
+            self.socket_path,
+            {"action": "get", "challenge_id": challenge_id},
+            timeout_seconds=3.0,
         )
 
     async def approve(self, challenge_id: str, confirmation: str) -> dict[str, Any]:
@@ -230,12 +256,14 @@ class UnixConsentOperatorClient:
                 "challenge_id": challenge_id,
                 "confirmation": confirmation,
             },
-            timeout=3.0,
+            timeout_seconds=3.0,
         )
 
     async def deny(self, challenge_id: str) -> dict[str, Any]:
         return await _request(
-            self.socket_path, {"action": "deny", "challenge_id": challenge_id}, timeout=3.0
+            self.socket_path,
+            {"action": "deny", "challenge_id": challenge_id},
+            timeout_seconds=3.0,
         )
 
 
@@ -260,7 +288,10 @@ async def serve_consent_agent(
             response = {"ok": False, "code": "CONSENT_FORBIDDEN"}
         except Exception as exc:
             response = {"ok": False, "code": _safe_error(exc)}
-        writer.write(json.dumps(response, ensure_ascii=False, separators=(",", ":")).encode() + b"\n")
+        encoded = json.dumps(
+            response, ensure_ascii=False, separators=(",", ":")
+        ).encode("utf-8")
+        writer.write(encoded + b"\n")
         try:
             await writer.drain()
         finally:
@@ -272,15 +303,26 @@ async def serve_consent_agent(
         await server.serve_forever()
 
 
-async def _request(socket_path: Path, payload: dict[str, Any], *, timeout: float) -> dict[str, Any]:
+async def _request(
+    socket_path: Path,
+    payload: dict[str, Any],
+    *,
+    timeout_seconds: float,
+) -> dict[str, Any]:
     try:
         reader, writer = await asyncio.wait_for(
-            asyncio.open_unix_connection(str(socket_path)), timeout=min(timeout, 3.0)
+            asyncio.open_unix_connection(str(socket_path)),
+            timeout=min(timeout_seconds, 3.0),
         )
         try:
-            writer.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode() + b"\n")
+            encoded = json.dumps(
+                payload, ensure_ascii=False, separators=(",", ":")
+            ).encode("utf-8")
+            writer.write(encoded + b"\n")
             await writer.drain()
-            line = await asyncio.wait_for(reader.readline(), timeout=timeout)
+            line = await asyncio.wait_for(
+                reader.readline(), timeout=timeout_seconds
+            )
         finally:
             writer.close()
             await writer.wait_closed()
@@ -302,7 +344,8 @@ def _peer_uid(writer: asyncio.StreamWriter) -> int:
     peer = writer.get_extra_info("socket")
     if peer is None or not hasattr(socket, "SO_PEERCRED"):
         return -1
-    credentials = peer.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+    size = struct.calcsize("3i")
+    credentials = peer.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, size)
     _, uid, _ = struct.unpack("3i", credentials)
     return uid
 
@@ -314,14 +357,16 @@ async def _unix_server(handler, socket_path: Path) -> asyncio.AbstractServer:
         inherited = socket.socket(fileno=3)
         inherited.setblocking(False)
         return await asyncio.start_unix_server(handler, sock=inherited)
-    socket_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        socket_path.unlink()
-    except FileNotFoundError:
-        pass
+    await asyncio.to_thread(_prepare_socket_path, socket_path)
     server = await asyncio.start_unix_server(handler, path=str(socket_path))
     os.chmod(socket_path, 0o660)
     return server
+
+
+def _prepare_socket_path(socket_path: Path) -> None:
+    socket_path.parent.mkdir(parents=True, exist_ok=True)
+    with suppress(FileNotFoundError):
+        socket_path.unlink()
 
 
 def _safe_error(exc: Exception) -> str:
