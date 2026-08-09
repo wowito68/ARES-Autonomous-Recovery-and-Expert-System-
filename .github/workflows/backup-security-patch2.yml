@@ -1,0 +1,113 @@
+name: Backup security patch v2
+
+on:
+  push:
+    branches:
+      - agent/backup-snapshot-manager
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/backup-snapshot-manager
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.11.14"
+          python-version: "3.12"
+          working-directory: backend
+
+      - name: Install locked dependencies
+        working-directory: backend
+        run: uv sync --frozen --dev
+
+      - name: Patch grant ordering and tests
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          broker = Path("backend/src/ares/runtime/broker.py")
+          text = broker.read_text(encoding="utf-8")
+          pattern = re.compile(
+              r'(?m)^        plan = BackupPlan\.model_validate\(request\.get\("plan"\)\)\n'
+              r'        grant = AuthorizationGrant\.model_validate\(request\.get\("grant"\)\)\n'
+              r'        await asyncio\.to_thread\(self\.tools\.revalidate_plan, plan\)\n'
+              r'        async with self\._lock:\n'
+              r'            stored = self\._grants\.pop\(grant\.id, None\)\n'
+          )
+          replacement = (
+              '        plan = BackupPlan.model_validate(request.get("plan"))\n'
+              '        grant = AuthorizationGrant.model_validate(request.get("grant"))\n'
+              '        async with self._lock:\n'
+              '            stored = self._grants.pop(grant.id, None)\n'
+          )
+          text, count = pattern.subn(replacement, text, count=1)
+          if count == 0:
+              already = text.find('stored = self._grants.pop(grant.id, None)')
+              revalidate = text.find('await asyncio.to_thread(self.tools.revalidate_plan, plan)', already)
+              if already < 0 or revalidate < 0:
+                  raise RuntimeError("broker grant ordering block not found")
+          else:
+              guard_end = text.find('        session_id = grant.session_id', text.find(replacement))
+              if guard_end < 0:
+                  raise RuntimeError("broker grant guard end not found")
+              revalidate_line = '        await asyncio.to_thread(self.tools.revalidate_plan, plan)\n'
+              text = text[:guard_end] + revalidate_line + text[guard_end:]
+          broker.write_text(text, encoding="utf-8")
+
+          tests = Path("backend/tests/test_backup_controls.py")
+          text = tests.read_text(encoding="utf-8")
+          text = text.replace("from datetime import UTC, datetime\n", "")
+          for unused in (
+              "    BackupCreateRequest,\n",
+              "    BackupPlanRequest,\n",
+              "    BackupStatus,\n",
+          ):
+              text = text.replace(unused, "")
+          if "    BackupPolicy,\n" not in text:
+              text = text.replace("    BackupPlan,\n", "    BackupPlan,\n    BackupPolicy,\n")
+          text = text.replace(
+              'tools.build_plan(str(source), str(destination), __import__("ares.backup.models", fromlist=["BackupPolicy"]).BackupPolicy())',
+              'tools.build_plan(str(source), str(destination), BackupPolicy())',
+          )
+          needle = (
+              '    response = await client.post(f"/api/v1/backups/{backup_id}/cancel")\n'
+              '    assert response.status_code == 200\n'
+              '    for _ in range(50):\n'
+          )
+          if needle in text:
+              text = text.replace(
+                  needle,
+                  needle.replace(
+                      '    for _ in range(50):\n',
+                      '    payload: dict[str, Any] = {}\n    for _ in range(50):\n',
+                  ),
+              )
+          tests.write_text(text, encoding="utf-8")
+
+      - name: Format patched files
+        working-directory: backend
+        run: uv run --frozen ruff format src/ares/runtime/broker.py tests/test_backup_controls.py
+
+      - name: Remove temporary security workflows and commit
+        run: |
+          git rm -f --ignore-unmatch .github/workflows/backup-security-patch.yml
+          git rm -f --ignore-unmatch .github/workflows/backup-security-patch2.yml
+          git add backend/src/ares/runtime/broker.py backend/tests/test_backup_controls.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --cached --quiet; then
+            echo "Nothing to commit."
+            exit 0
+          fi
+          git commit -m "security: consume backup grants before plan revalidation"
+          git push origin HEAD:agent/backup-snapshot-manager
