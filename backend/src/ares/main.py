@@ -13,7 +13,7 @@ from ares.api.router import api_router
 from ares.audit import MemoryAuditLedger, UnixAuditLedgerClient
 from ares.backup import BackupService, BackupStore, LocalTestBackupExecutor, UnixBrokerBackupExecutor
 from ares.capabilities import CapabilityManager, discover_plugins
-from ares.capabilities.plugins import BackupPlugin, DiskAnalysisPlugin
+from ares.capabilities.plugins import BackupPlugin, DiskAnalysisPlugin, FilesystemRepairPlugin
 from ares.config import Environment, Settings, get_settings
 from ares.core.logging import configure_logging
 from ares.core.middleware import RequestContextMiddleware
@@ -21,9 +21,16 @@ from ares.core.problems import install_problem_handlers
 from ares.database import Database
 from ares.diagnostics import DiagnosticStore
 from ares.events import EventBus, JsonlEventSink
+from ares.filesystems import (
+    FilesystemRepairService,
+    FilesystemRepairStore,
+    LocalTestFilesystemExecutor,
+    UnixBrokerFilesystemExecutor,
+)
 from ares.knowledge import KnowledgeGraph
 from ares.llm import AIRuntime, OllamaRuntime
 from ares.planner import Planner
+from ares.protection import ProtectionCheckpointService, ProtectionCheckpointStore
 from ares.reasoning import ReasoningEngine
 from ares.storage.service import StorageAnalysisService
 from ares.storage.store import StorageSnapshotStore
@@ -33,6 +40,7 @@ from ares.tools import (
     SafeProcessRunner,
     StorageToolSuite,
 )
+from ares.tools.filesystem import FilesystemToolSuite, MountSafetyChecker
 from ares.workflows import WorkflowEngine
 
 
@@ -64,6 +72,10 @@ def create_app(
     snapshot_store = StorageSnapshotStore(capability_state_dir / "storage/snapshots")
     diagnostic_store = DiagnosticStore(capability_state_dir / "diagnostics")
     backup_store = BackupStore(capability_state_dir / "backups")
+    checkpoint_store = ProtectionCheckpointStore(
+        capability_state_dir / "protection/checkpoints"
+    )
+    filesystem_store = FilesystemRepairStore(capability_state_dir / "filesystems")
     storage_runner = ReadOnlyStorageProcessRunner(SafeProcessRunner())
     storage_tools = StorageToolSuite(
         inventory_path,
@@ -74,9 +86,18 @@ def create_app(
     if resolved_settings.environment is Environment.TEST:
         backup_executor = LocalTestBackupExecutor(backup_tools)
         audit_ledger = MemoryAuditLedger()
+        filesystem_tools = FilesystemToolSuite(
+            mount_checker=MountSafetyChecker(scan_processes=False),
+            allow_regular_file_targets=True,
+        )
+        filesystem_executor = LocalTestFilesystemExecutor(filesystem_tools)
     else:
         backup_executor = UnixBrokerBackupExecutor(resolved_settings.backup_broker_socket)
         audit_ledger = UnixAuditLedgerClient(resolved_settings.audit_socket)
+        filesystem_tools = None
+        filesystem_executor = UnixBrokerFilesystemExecutor(
+            resolved_settings.backup_broker_socket
+        )
     workflow_engine = WorkflowEngine(event_bus, knowledge_graph)
     capability_manager = CapabilityManager(
         workflow_engine,
@@ -85,6 +106,7 @@ def create_app(
     builtins = (
         DiskAnalysisPlugin(storage_tools, snapshot_store),
         BackupPlugin(backup_store, backup_tools, backup_executor),
+        FilesystemRepairPlugin(filesystem_store, filesystem_executor),
     )
     capability_manager.load(
         discover_plugins(
@@ -113,6 +135,15 @@ def create_app(
         event_bus,
         audit_ledger,
     )
+    protection_service = ProtectionCheckpointService(backup_store, checkpoint_store)
+    filesystem_repair_service = FilesystemRepairService(
+        capabilities=capability_manager,
+        executor=filesystem_executor,
+        store=filesystem_store,
+        protection=protection_service,
+        event_bus=event_bus,
+        audit=audit_ledger,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -122,9 +153,12 @@ def create_app(
         snapshot_store.prepare()
         diagnostic_store.prepare()
         backup_store.prepare()
+        checkpoint_store.prepare()
+        filesystem_store.prepare()
         try:
             yield
         finally:
+            await filesystem_repair_service.shutdown()
             await backup_service.shutdown()
             await database.dispose()
 
@@ -160,6 +194,12 @@ def create_app(
     application.state.backup_tools = backup_tools
     application.state.backup_executor = backup_executor
     application.state.backup_service = backup_service
+    application.state.protection_checkpoint_store = checkpoint_store
+    application.state.protection_checkpoint_service = protection_service
+    application.state.filesystem_repair_store = filesystem_store
+    application.state.filesystem_executor = filesystem_executor
+    application.state.filesystem_tools = filesystem_tools
+    application.state.filesystem_repair_service = filesystem_repair_service
     application.add_middleware(RequestContextMiddleware)
     install_problem_handlers(application)
     application.include_router(api_router, prefix=resolved_settings.api_prefix)
@@ -169,9 +209,13 @@ def create_app(
         @application.get("/", include_in_schema=False, response_class=HTMLResponse)
         async def platform_index() -> HTMLResponse:
             source = index_path.read_text(encoding="utf-8")
-            loader = '<script src="/backup.js" defer></script>'
-            if loader not in source:
-                source = source.replace("</body>", f"  {loader}\n</body>")
+            loaders = (
+                '<script src="/backup.js" defer></script>',
+                '<script src="/filesystem.js" defer></script>',
+            )
+            for loader in loaders:
+                if loader not in source:
+                    source = source.replace("</body>", f"  {loader}\n</body>")
             return HTMLResponse(source)
 
         application.mount(
