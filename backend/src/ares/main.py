@@ -6,11 +6,14 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from ares.api.router import api_router
+from ares.audit import MemoryAuditLedger, UnixAuditLedgerClient
+from ares.backup import BackupService, BackupStore, LocalTestBackupExecutor, UnixBrokerBackupExecutor
 from ares.capabilities import CapabilityManager, discover_plugins
-from ares.capabilities.plugins import DiskAnalysisPlugin
+from ares.capabilities.plugins import BackupPlugin, DiskAnalysisPlugin
 from ares.config import Environment, Settings, get_settings
 from ares.core.logging import configure_logging
 from ares.core.middleware import RequestContextMiddleware
@@ -24,7 +27,12 @@ from ares.planner import Planner
 from ares.reasoning import ReasoningEngine
 from ares.storage.service import StorageAnalysisService
 from ares.storage.store import StorageSnapshotStore
-from ares.tools import ReadOnlyStorageProcessRunner, SafeProcessRunner, StorageToolSuite
+from ares.tools import (
+    BackupFilesystemTools,
+    ReadOnlyStorageProcessRunner,
+    SafeProcessRunner,
+    StorageToolSuite,
+)
 from ares.workflows import WorkflowEngine
 
 
@@ -55,18 +63,29 @@ def create_app(
     knowledge_graph = KnowledgeGraph(capability_state_dir / "knowledge-graph.json")
     snapshot_store = StorageSnapshotStore(capability_state_dir / "storage/snapshots")
     diagnostic_store = DiagnosticStore(capability_state_dir / "diagnostics")
+    backup_store = BackupStore(capability_state_dir / "backups")
     storage_runner = ReadOnlyStorageProcessRunner(SafeProcessRunner())
     storage_tools = StorageToolSuite(
         inventory_path,
         runner=storage_runner,
         process_probes_enabled=resolved_settings.storage_process_probes_enabled,
     )
+    backup_tools = BackupFilesystemTools()
+    if resolved_settings.environment is Environment.TEST:
+        backup_executor = LocalTestBackupExecutor(backup_tools)
+        audit_ledger = MemoryAuditLedger()
+    else:
+        backup_executor = UnixBrokerBackupExecutor(resolved_settings.backup_broker_socket)
+        audit_ledger = UnixAuditLedgerClient(resolved_settings.audit_socket)
     workflow_engine = WorkflowEngine(event_bus, knowledge_graph)
     capability_manager = CapabilityManager(
         workflow_engine,
         live_mode=_read_live_mode(resolved_settings),
     )
-    builtins = (DiskAnalysisPlugin(storage_tools, snapshot_store),)
+    builtins = (
+        DiskAnalysisPlugin(storage_tools, snapshot_store),
+        BackupPlugin(backup_store, backup_tools, backup_executor),
+    )
     capability_manager.load(
         discover_plugins(
             builtins,
@@ -86,6 +105,14 @@ def create_app(
         storage_tools,
         inventory_path,
     )
+    backup_service = BackupService(
+        capability_manager,
+        workflow_engine,
+        backup_store,
+        backup_tools,
+        event_bus,
+        audit_ledger,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -94,9 +121,11 @@ def create_app(
         knowledge_graph.prepare()
         snapshot_store.prepare()
         diagnostic_store.prepare()
+        backup_store.prepare()
         try:
             yield
         finally:
+            await backup_service.shutdown()
             await database.dispose()
 
     application = FastAPI(
@@ -107,7 +136,9 @@ def create_app(
         docs_url=None,
         redoc_url=None,
         openapi_url=(
-            "/openapi.json" if resolved_settings.environment is not Environment.PRODUCTION else None
+            "/openapi.json"
+            if resolved_settings.environment is not Environment.PRODUCTION
+            else None
         ),
         lifespan=lifespan,
     )
@@ -115,6 +146,7 @@ def create_app(
     application.state.database = database
     application.state.ai_runtime = ai_runtime or OllamaRuntime(resolved_settings)
     application.state.event_bus = event_bus
+    application.state.audit_ledger = audit_ledger
     application.state.knowledge_graph = knowledge_graph
     application.state.workflow_engine = workflow_engine
     application.state.capability_manager = capability_manager
@@ -124,10 +156,24 @@ def create_app(
     application.state.diagnostic_store = diagnostic_store
     application.state.storage_tools = storage_tools
     application.state.storage_analysis_service = storage_analysis_service
+    application.state.backup_store = backup_store
+    application.state.backup_tools = backup_tools
+    application.state.backup_executor = backup_executor
+    application.state.backup_service = backup_service
     application.add_middleware(RequestContextMiddleware)
     install_problem_handlers(application)
     application.include_router(api_router, prefix=resolved_settings.api_prefix)
     if resolved_settings.static_dir is not None and resolved_settings.static_dir.is_dir():
+        index_path = resolved_settings.static_dir / "index.html"
+
+        @application.get("/", include_in_schema=False, response_class=HTMLResponse)
+        async def platform_index() -> HTMLResponse:
+            source = index_path.read_text(encoding="utf-8")
+            loader = '<script src="/backup.js" defer></script>'
+            if loader not in source:
+                source = source.replace("</body>", f"  {loader}\n</body>")
+            return HTMLResponse(source)
+
         application.mount(
             "/",
             StaticFiles(directory=resolved_settings.static_dir, html=True),

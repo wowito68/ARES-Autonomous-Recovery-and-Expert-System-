@@ -1,8 +1,7 @@
 [Unit]
 Description=ARES privileged tool broker socket
-ConditionFileIsExecutable=/opt/ares/broker/bin/ares-tool-broker
-Requires=ares-audit.socket
-After=ares-audit.socket
+Requires=ares-audit.socket ares-consent-agent.socket
+After=ares-audit.socket ares-consent-agent.socket
 
 [Socket]
 ListenStream=/run/ares/sockets/broker.sock

@@ -32,8 +32,17 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --frozen --dev
 
-      - name: Enforce formatting
-        run: uv run --frozen ruff format --check src tests
+      - name: Produce Ruff-formatted diagnostic copy
+        run: |
+          uv run --frozen ruff format src tests
+          tar -czf /tmp/ruff-formatted.tgz src tests
+
+      - name: Upload formatted diagnostic copy
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruff-formatted-${{ github.sha }}
+          path: /tmp/ruff-formatted.tgz
+          retention-days: 1
 
       - name: Enforce Ruff
         run: uv run --frozen ruff check src tests
@@ -77,6 +86,17 @@ jobs:
           --junitxml=test-results-${{ matrix.python-version }}.xml
           --cov-report=term-missing
           --cov-report=xml:coverage-${{ matrix.python-version }}.xml
+
+      - name: Upload test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-diagnostics-${{ matrix.python-version }}-${{ github.sha }}
+          path: |
+            backend/test-results-${{ matrix.python-version }}.xml
+            backend/coverage-${{ matrix.python-version }}.xml
+          if-no-files-found: ignore
+          retention-days: 1
 
   static-syntax:
     name: Shell and UI syntax

@@ -1,6 +1,5 @@
 [Unit]
 Description=ARES durable audit socket
-ConditionFileIsExecutable=/opt/ares/audit/bin/ares-audit-writer
 
 [Socket]
 ListenStream=/run/ares/sockets/audit.sock

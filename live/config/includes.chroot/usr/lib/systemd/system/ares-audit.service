@@ -1,20 +1,25 @@
 [Unit]
 Description=ARES durable audit writer
-ConditionFileIsExecutable=/opt/ares/audit/bin/ares-audit-writer
 Requires=ares-state-setup.service
 After=ares-state-setup.service
 
 [Service]
-Type=notify
+Type=simple
 User=ares-audit
 Group=ares-audit
-ExecStart=/opt/ares/audit/bin/ares-audit-writer
+Environment=PYTHONPATH=/opt/ares/backend/src
+ExecStart=/usr/bin/python3 -m ares.runtime.entrypoints audit
 Restart=on-failure
 RestartSec=2s
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
 CapabilityBoundingSet=
-ReadWritePaths=/var/lib/ares/audit /var/log/ares /run/ares/sockets
+ReadWritePaths=/var/lib/ares/audit /run/ares/sockets
 IPAddressDeny=any

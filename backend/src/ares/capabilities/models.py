@@ -105,12 +105,13 @@ class CapabilityMetadata(BaseModel):
     mode: CapabilityMode = CapabilityMode.READ_ONLY
     os_compatibility: OSCompatibility
     risk: RiskLevel
-    estimated_duration_seconds: Annotated[float, Field(gt=0, le=3600)]
+    estimated_duration_seconds: Annotated[float, Field(gt=0, le=86_400)]
     permissions: tuple[PermissionRequirement, ...]
     dependencies: tuple[str, ...] = ()
     internal_actions: tuple[str, ...]
     postchecks: tuple[str, ...]
     rollback: RollbackPolicy
+    requires_protection_checkpoint: bool = False
     required_evidence: tuple[str, ...] = ()
     emitted_events: tuple[str, ...]
     metrics: tuple[str, ...]

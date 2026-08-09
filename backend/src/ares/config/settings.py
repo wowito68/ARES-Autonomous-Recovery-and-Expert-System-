@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     runtime_state_dir: Path = Path("/run/ares")
     capability_state_dir: Path | None = None
     storage_process_probes_enabled: bool = True
+    backup_broker_socket: Path = Path("/run/ares/sockets/broker.sock")
+    audit_socket: Path = Path("/run/ares/sockets/audit.sock")
+    consent_socket: Path = Path("/run/ares/sockets/consent.sock")
     capability_plugin_entrypoint_group: Annotated[
         str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_.-]{2,127}$")
     ] = "ares.capabilities"
@@ -93,6 +96,9 @@ class Settings(BaseSettings):
             _ENTRY_POINT_NAME.fullmatch(name) is None for name in self.capability_plugin_allowlist
         ):
             raise ValueError("capability_plugin_allowlist contains an invalid entry-point name")
+        for socket_path in (self.backup_broker_socket, self.audit_socket, self.consent_socket):
+            if not socket_path.is_absolute() or ".." in socket_path.parts:
+                raise ValueError("ARES Unix socket paths must be absolute and canonical")
         return self
 
 

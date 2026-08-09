@@ -1,0 +1,14 @@
+[Unit]
+Description=ARES trusted local consent socket
+Requires=ares-audit.socket
+After=ares-audit.socket
+
+[Socket]
+ListenStream=/run/ares/sockets/consent.sock
+SocketUser=ares-consent
+SocketGroup=ares
+SocketMode=0660
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

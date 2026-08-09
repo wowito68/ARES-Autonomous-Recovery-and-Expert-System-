@@ -21,6 +21,29 @@ from ares.reasoning.models import (
 from ares.storage import StorageHealth, SystemStorageSnapshot
 
 _TOKEN = re.compile(r"[a-záéíóúüñ0-9]{3,}", re.IGNORECASE)
+_STOP_WORDS = {
+    "the",
+    "and",
+    "for",
+    "with",
+    "from",
+    "this",
+    "that",
+    "una",
+    "uno",
+    "unos",
+    "unas",
+    "del",
+    "las",
+    "los",
+    "por",
+    "para",
+    "con",
+    "que",
+    "mis",
+    "sus",
+    "antes",
+}
 _SEVERITY_RANK = {
     DiagnosticSeverity.INFO: 0,
     DiagnosticSeverity.WARNING: 1,
@@ -36,7 +59,7 @@ class ReasoningEngine:
         self.capabilities = capabilities
 
     def assess(self, request: ReasoningRequest) -> ReasoningAssessment:
-        goal_terms = {match.group(0).casefold() for match in _TOKEN.finditer(request.goal)}
+        goal_terms = _meaningful_terms(request.goal)
         candidates: list[tuple[float, str]] = []
         for metadata in self.capabilities.catalog():
             searchable = " ".join(
@@ -47,7 +70,7 @@ class ReasoningEngine:
                     *metadata.keywords,
                 )
             )
-            metadata_terms = {match.group(0).casefold() for match in _TOKEN.finditer(searchable)}
+            metadata_terms = _meaningful_terms(searchable)
             overlap = goal_terms & metadata_terms
             if overlap:
                 confidence = min(0.95, 0.45 + 0.1 * len(overlap))
@@ -241,3 +264,11 @@ class ReasoningEngine:
             limitations=unique_limitations,
             needs_more_evidence=needs_more,
         )
+
+
+def _meaningful_terms(value: str) -> set[str]:
+    return {
+        token
+        for match in _TOKEN.finditer(value)
+        if (token := match.group(0).casefold()) not in _STOP_WORDS
+    }
