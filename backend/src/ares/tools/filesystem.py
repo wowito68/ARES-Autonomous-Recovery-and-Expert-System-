@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
-import re
 import stat
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -30,7 +30,10 @@ RepairEventCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
 _SAFE_MOUNT_OPTIONS = frozenset(
     {"rw", "ro", "relatime", "noatime", "nodiratime", "lazytime", "sync", "dirsync"}
 )
-_SAFE_DEVICE_PATH = re.compile(r"^/dev/[A-Za-z0-9_.:+/@-]{1,255}$")
+_DEVICE_ROOT = Path("/dev")
+_MAX_PROCESSES = 32_768
+_MAX_FDS_PER_PROCESS = 256
+_MAX_BUSY_PIDS = 64
 
 
 class FilesystemToolError(Exception):
@@ -40,7 +43,7 @@ class FilesystemToolError(Exception):
 
 
 class MountSafetyChecker:
-    """Inspect mount/swap/process state without changing it."""
+    """Inspect mount, swap and process references without changing the target."""
 
     def __init__(
         self,
@@ -60,7 +63,6 @@ class MountSafetyChecker:
         nested = self._nested_mounts(mounts)
         swap = self._is_swap(identity)
         active = self._active_processes(mounts) if self.scan_processes else ()
-        busy = bool(active)
         unsupported = tuple(
             sorted(
                 {
@@ -81,29 +83,31 @@ class MountSafetyChecker:
             reasons.append("bind_mount")
         if swap:
             reasons.append("active_swap")
-        if busy:
+        if active:
             reasons.append("active_process_handles")
         if unsupported:
             reasons.append("mount_options_cannot_be_restored_safely")
         mounted = bool(mounts)
-        safe_to_unmount = mounted and not reasons
-        safe_to_remount = mounted and not unsupported and len(mounts) == 1 and not bind
         return MountSafetyReport(
             mounted=mounted,
-            busy=busy,
+            busy=bool(active),
             swap=swap,
             mounts=mounts,
             nested_mounts=nested,
             active_processes=active,
             unsupported_mount_options=unsupported,
-            safe_to_unmount=safe_to_unmount,
-            safe_to_remount=safe_to_remount,
+            safe_to_unmount=mounted and not reasons,
+            safe_to_remount=(
+                mounted and not unsupported and len(mounts) == 1 and not bind
+            ),
             reasons=tuple(reasons),
         )
 
     def _mounts(self, identity: DeviceIdentity) -> tuple[MountRecord, ...]:
         try:
-            lines = self.mountinfo_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            lines = self.mountinfo_path.read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines()
         except OSError:
             return ()
         records: list[MountRecord] = []
@@ -115,9 +119,7 @@ class MountSafetyChecker:
             right = after.split()
             if len(left) < 6 or len(right) < 2:
                 continue
-            major_minor = left[2]
-            source = right[1]
-            if major_minor != identity.major_minor and source != identity.canonical_path:
+            if left[2] != identity.major_minor and right[1] != identity.canonical_path:
                 continue
             root = _unescape_mount(left[3])
             mount_point = _unescape_mount(left[4])
@@ -126,7 +128,7 @@ class MountSafetyChecker:
                 MountRecord(
                     mount_point=mount_point,
                     root=root,
-                    source=source,
+                    source=right[1],
                     filesystem_type=right[0],
                     options=options,
                     bind_mount=root != "/",
@@ -138,12 +140,14 @@ class MountSafetyChecker:
         if not mounts:
             return ()
         roots = tuple(Path(item.mount_point) for item in mounts)
+        own = {item.mount_point for item in mounts}
         try:
-            lines = self.mountinfo_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            lines = self.mountinfo_path.read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines()
         except OSError:
             return ()
         nested: set[str] = set()
-        own = {item.mount_point for item in mounts}
         for line in lines:
             before, separator, _ = line.partition(" - ")
             fields = before.split()
@@ -152,58 +156,64 @@ class MountSafetyChecker:
             candidate = _unescape_mount(fields[4])
             if candidate in own:
                 continue
-            path = Path(candidate)
-            for root in roots:
-                try:
-                    path.relative_to(root)
-                except ValueError:
-                    continue
+            if _path_under_roots(candidate, roots):
                 nested.add(candidate)
         return tuple(sorted(nested))
 
     def _is_swap(self, identity: DeviceIdentity) -> bool:
         try:
-            lines = self.swaps_path.read_text(encoding="utf-8", errors="replace").splitlines()[1:]
+            lines = self.swaps_path.read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines()[1:]
         except OSError:
             return False
-        return any(line.split(maxsplit=1)[0] == identity.canonical_path for line in lines if line)
+        for line in lines:
+            if not line:
+                continue
+            if line.split(maxsplit=1)[0] == identity.canonical_path:
+                return True
+        return False
 
     def _active_processes(self, mounts: tuple[MountRecord, ...]) -> tuple[int, ...]:
         if not mounts:
             return ()
         roots = tuple(Path(item.mount_point) for item in mounts)
-        found: list[int] = []
         try:
-            processes = tuple(self.proc_root.iterdir())
+            processes = tuple(self.proc_root.iterdir())[:_MAX_PROCESSES]
         except OSError:
             return ()
+        found: set[int] = set()
         for process in processes:
             if not process.name.isdigit():
                 continue
-            fd_dir = process / "fd"
+            pid = int(process.name)
+            if self._process_references_mount(process, roots):
+                found.add(pid)
+            if len(found) >= _MAX_BUSY_PIDS:
+                break
+        return tuple(sorted(found))
+
+    @staticmethod
+    def _process_references_mount(process: Path, roots: tuple[Path, ...]) -> bool:
+        for special in ("cwd", "root", "exe"):
             try:
-                descriptors = tuple(fd_dir.iterdir())[:256]
+                target = os.readlink(process / special)
             except OSError:
                 continue
-            matched = False
-            for descriptor in descriptors:
-                try:
-                    target = Path(os.readlink(descriptor))
-                except OSError:
-                    continue
-                for root in roots:
-                    try:
-                        target.relative_to(root)
-                    except ValueError:
-                        continue
-                    found.append(int(process.name))
-                    matched = True
-                    break
-                if matched:
-                    break
-            if len(found) >= 64:
-                break
-        return tuple(sorted(set(found)))
+            if _path_under_roots(target, roots):
+                return True
+        try:
+            descriptors = tuple((process / "fd").iterdir())[:_MAX_FDS_PER_PROCESS]
+        except OSError:
+            return False
+        for descriptor in descriptors:
+            try:
+                target = os.readlink(descriptor)
+            except OSError:
+                continue
+            if _path_under_roots(target, roots):
+                return True
+        return False
 
 
 class FilesystemToolSuite:
@@ -223,12 +233,13 @@ class FilesystemToolSuite:
     async def inspect(self, requested: str) -> FilesystemInspection:
         identity = await self.identify(requested)
         filesystem = await self._detect_filesystem(identity)
-        mount = self.mount_checker.inspect(identity)
+        mount = await asyncio.to_thread(self.mount_checker.inspect, identity)
+        writable = await asyncio.to_thread(os.access, identity.canonical_path, os.W_OK)
         if filesystem is None:
             return FilesystemInspection(
                 identity=identity,
                 mount=mount,
-                writable=os.access(identity.canonical_path, os.W_OK),
+                writable=writable,
                 supported=False,
                 repair_supported=False,
                 limitations=("filesystem_type_unsupported_or_unknown",),
@@ -246,7 +257,6 @@ class FilesystemToolSuite:
         else:
             check = await self.check(identity, filesystem)
             health = check.health
-        writable = os.access(identity.canonical_path, os.W_OK)
         if not writable:
             limitations.append("target_not_writable")
         return FilesystemInspection(
@@ -265,21 +275,26 @@ class FilesystemToolSuite:
     async def identify(self, requested: str) -> DeviceIdentity:
         if not requested or "\x00" in requested or not os.path.isabs(requested):
             raise FilesystemToolError("FILESYSTEM_TARGET_INVALID")
-        if not self.allow_regular_file_targets and _SAFE_DEVICE_PATH.fullmatch(requested) is None:
+        if not self.allow_regular_file_targets and not _valid_device_request(requested):
             raise FilesystemToolError("FILESYSTEM_TARGET_INVALID")
-        path = Path(requested)
         try:
-            canonical = path.resolve(strict=True)
-            info = canonical.stat()
+            canonical, info = await asyncio.to_thread(_resolve_target, requested)
         except OSError as exc:
             raise FilesystemToolError("FILESYSTEM_TARGET_NOT_FOUND") from exc
+        if not self.allow_regular_file_targets:
+            try:
+                canonical.relative_to(_DEVICE_ROOT)
+            except ValueError as exc:
+                raise FilesystemToolError("FILESYSTEM_TARGET_INVALID") from exc
         block = stat.S_ISBLK(info.st_mode)
-        if not block and not (self.allow_regular_file_targets and stat.S_ISREG(info.st_mode)):
+        regular_test_image = self.allow_regular_file_targets and stat.S_ISREG(info.st_mode)
+        if not block and not regular_test_image:
             raise FilesystemToolError("FILESYSTEM_TARGET_NOT_BLOCK_DEVICE")
-        if block:
-            major_minor = f"{os.major(info.st_rdev)}:{os.minor(info.st_rdev)}"
-        else:
-            major_minor = f"file:{info.st_dev}:{info.st_ino}"
+        major_minor = (
+            f"{os.major(info.st_rdev)}:{os.minor(info.st_rdev)}"
+            if block
+            else f"file:{info.st_dev}:{info.st_ino}"
+        )
         blkid = await self._blkid(str(canonical))
         lsblk = await self._lsblk(str(canonical)) if block else {}
         filesystem_uuid = blkid.get("UUID") or _string(lsblk.get("uuid"))
@@ -287,7 +302,7 @@ class FilesystemToolSuite:
         serial = _string(lsblk.get("serial"))
         model = _string(lsblk.get("model"))
         size = _integer(lsblk.get("size"), info.st_size if not block else 0)
-        body = {
+        identity_body = {
             "canonical_path": str(canonical),
             "major_minor": major_minor,
             "filesystem_uuid": filesystem_uuid,
@@ -297,7 +312,9 @@ class FilesystemToolSuite:
             "size_bytes": size,
         }
         fingerprint = hashlib.sha256(
-            json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            json.dumps(
+                identity_body, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
         ).hexdigest()
         return DeviceIdentity(
             requested_path=requested,
@@ -323,7 +340,7 @@ class FilesystemToolSuite:
             identity.canonical_path, image=not identity.block_device
         )
         try:
-            result = await self.runner.run(tool, args, timeout_seconds=1800)
+            result = await self.runner.run(tool, args, timeout_seconds=1_800)
         except FileNotFoundError as exc:
             raise FilesystemToolError("FILESYSTEM_TOOL_UNAVAILABLE") from exc
         except TimeoutError as exc:
@@ -345,7 +362,7 @@ class FilesystemToolSuite:
         if not adapter.capabilities.repair_supported:
             raise FilesystemToolError("FILESYSTEM_REPAIR_UNSUPPORTED")
         current = await self.revalidate(plan.target)
-        current_mount = self.mount_checker.inspect(current)
+        current_mount = await asyncio.to_thread(self.mount_checker.inspect, current)
         originally_mounted = plan.mount.mounted
         if current_mount != plan.mount:
             raise FilesystemToolError("FILESYSTEM_MOUNT_STATE_CHANGED")
@@ -420,23 +437,22 @@ class FilesystemToolSuite:
         names = ["blkid", *adapter.required_tools]
         if mounted:
             names.extend(("umount", "mount"))
-        result: list[ToolRequirement] = []
+        requirements: list[ToolRequirement] = []
         for name in dict.fromkeys(names):
             availability: ToolAvailability = self.runner.inspect(name)
-            result.append(
+            requirements.append(
                 ToolRequirement(
                     tool=name,
                     available=availability.available,
                     reason=availability.reason,
                 )
             )
-        return tuple(result)
+        return tuple(requirements)
 
     async def _detect_filesystem(self, identity: DeviceIdentity) -> FilesystemType | None:
         values = await self._blkid(identity.canonical_path)
         raw = (values.get("TYPE") or "").casefold()
-        aliases = {"ntfs3": "ntfs", "fuseblk": "ntfs"}
-        normalized = aliases.get(raw, raw)
+        normalized = {"ntfs3": "ntfs", "fuseblk": "ntfs"}.get(raw, raw)
         try:
             return FilesystemType(normalized)
         except ValueError:
@@ -446,7 +462,9 @@ class FilesystemToolSuite:
         if not self.runner.inspect("blkid").available:
             return {}
         try:
-            result = await self.runner.run("blkid", ("-o", "export", target), timeout_seconds=10)
+            result = await self.runner.run(
+                "blkid", ("-o", "export", target), timeout_seconds=10
+            )
         except (FileNotFoundError, TimeoutError):
             return {}
         if result.exit_code not in {0, 2}:
@@ -454,7 +472,7 @@ class FilesystemToolSuite:
         values: dict[str, str] = {}
         for line in result.stdout.splitlines():
             key, separator, value = line.partition("=")
-            if separator and key.isupper() and len(value) <= 4096:
+            if separator and key.isupper() and len(value) <= 4_096:
                 values[key] = value
         return values
 
@@ -488,7 +506,9 @@ class FilesystemToolSuite:
             raise FilesystemToolError("FILESYSTEM_REPAIR_BLOCKED")
         record = mount.mounts[0]
         try:
-            result = await self.runner.run("umount", ("--", record.mount_point), timeout_seconds=120)
+            result = await self.runner.run(
+                "umount", ("--", record.mount_point), timeout_seconds=120
+            )
         except (FileNotFoundError, TimeoutError) as exc:
             raise FilesystemToolError("FILESYSTEM_UNMOUNT_FAILED") from exc
         if result.exit_code != 0:
@@ -498,8 +518,9 @@ class FilesystemToolSuite:
         if len(plan.mount.mounts) != 1:
             return False
         record = plan.mount.mounts[0]
-        options = tuple(option for option in record.options if option in _SAFE_MOUNT_OPTIONS)
-        args: tuple[str, ...]
+        options = tuple(
+            option for option in record.options if option in _SAFE_MOUNT_OPTIONS
+        )
         if options:
             args = (
                 "-t",
@@ -510,12 +531,51 @@ class FilesystemToolSuite:
                 record.mount_point,
             )
         else:
-            args = ("-t", plan.filesystem.value, plan.target.canonical_path, record.mount_point)
+            args = (
+                "-t",
+                plan.filesystem.value,
+                plan.target.canonical_path,
+                record.mount_point,
+            )
         try:
             result = await self.runner.run("mount", args, timeout_seconds=120)
         except (FileNotFoundError, TimeoutError):
             return False
         return result.exit_code == 0
+
+
+def _valid_device_request(requested: str) -> bool:
+    path = Path(requested)
+    if not path.is_absolute() or len(requested) > 4_096:
+        return False
+    parts = path.parts
+    if len(parts) < 3 or parts[0] != "/" or parts[1] != "dev":
+        return False
+    return all(
+        part not in {"", ".", ".."}
+        and len(part) <= 255
+        and all(character.isalnum() or character in "_.:+@-" for character in part)
+        for part in parts[2:]
+    )
+
+
+def _resolve_target(requested: str) -> tuple[Path, os.stat_result]:
+    canonical = Path(requested).resolve(strict=True)
+    return canonical, canonical.stat()
+
+
+def _path_under_roots(value: str, roots: tuple[Path, ...]) -> bool:
+    candidate_text = value.removesuffix(" (deleted)")
+    candidate = Path(candidate_text)
+    if not candidate.is_absolute():
+        return False
+    for root in roots:
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            continue
+        return True
+    return False
 
 
 def _unescape_mount(value: str) -> str:
