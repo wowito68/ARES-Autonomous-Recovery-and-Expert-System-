@@ -6,7 +6,8 @@ import hashlib
 import json
 from pathlib import Path
 
-from ares.backup import BackupStatus, BackupStore, BackupVerificationStatus
+from ares.backup.models import BackupStatus, BackupVerificationStatus
+from ares.backup.store import BackupStore
 from ares.protection.models import ProtectionCheckpoint, ProtectionCheckpointStatus
 from ares.protection.store import ProtectionCheckpointStore
 
