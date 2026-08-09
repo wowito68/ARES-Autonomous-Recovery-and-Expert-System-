@@ -146,7 +146,13 @@ class ProcessRunner(Protocol):
     def inspect(self, tool: str) -> ToolAvailability:
         """Return whether a trusted executable exists."""
 
-    async def run(self, tool: str, args: tuple[str, ...], *, timeout: float) -> ProcessResult:
+    async def run(
+        self,
+        tool: str,
+        args: tuple[str, ...],
+        *,
+        timeout_seconds: float,
+    ) -> ProcessResult:
         """Run one fixed executable without a shell."""
 
 
@@ -165,7 +171,13 @@ class SafeProcessRunner:
             return ToolAvailability(tool=tool, available=False, reason="untrusted_executable")
         return ToolAvailability(tool=tool, available=True)
 
-    async def run(self, tool: str, args: tuple[str, ...], *, timeout: float) -> ProcessResult:
+    async def run(
+        self,
+        tool: str,
+        args: tuple[str, ...],
+        *,
+        timeout_seconds: float,
+    ) -> ProcessResult:
         availability = self.inspect(tool)
         if not availability.available:
             raise FileNotFoundError(availability.reason or "tool_unavailable")
@@ -183,7 +195,9 @@ class SafeProcessRunner:
             env={"LANG": "C", "LC_ALL": "C", "PATH": "/usr/sbin:/usr/bin:/sbin:/bin"},
         )
         try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(process.communicate(), timeout)
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                process.communicate(), timeout_seconds
+            )
         except TimeoutError:
             process.kill()
             await process.wait()
@@ -232,7 +246,7 @@ class StorageToolSuite:
                     "--output",
                     "NAME,PATH,TYPE,SIZE,RO,RM,MODEL,VENDOR,TRAN,PKNAME,FSTYPE,FSVER,UUID,LABEL,MOUNTPOINTS,SERIAL,WWN",
                 ),
-                timeout=4,
+                timeout_seconds=4,
             )
             availability.append(lsblk[0])
             if lsblk[1] is not None and lsblk[1].exit_code == 0:
@@ -248,7 +262,7 @@ class StorageToolSuite:
                 correlation_id,
                 "findmnt",
                 ("--json", "--bytes", "--output", "SOURCE,TARGET,FSTYPE,OPTIONS"),
-                timeout=4,
+                timeout_seconds=4,
             )
             availability.append(findmnt[0])
             if findmnt[1] is not None and findmnt[1].exit_code == 0:
@@ -262,7 +276,7 @@ class StorageToolSuite:
                 correlation_id,
                 "df",
                 ("-B1", "--output=source,size,used,avail,pcent,target"),
-                timeout=4,
+                timeout_seconds=4,
             )
             availability.append(df[0])
             if df[1] is not None and df[1].exit_code == 0:
@@ -319,7 +333,7 @@ class StorageToolSuite:
         tool: str,
         args: tuple[str, ...],
         *,
-        timeout: float,
+        timeout_seconds: float,
     ) -> tuple[ToolAvailability, ProcessResult | None]:
         state = self.runner.inspect(tool)
         if not state.available:
@@ -329,7 +343,7 @@ class StorageToolSuite:
             return state, None
         await _tool_event(event_bus, correlation_id, "tool.execution.started", tool, None)
         try:
-            result = await self.runner.run(tool, args, timeout=timeout)
+            result = await self.runner.run(tool, args, timeout_seconds=timeout_seconds)
         except TimeoutError:
             state = ToolAvailability(tool=tool, available=False, reason="timeout")
             await _tool_event(
