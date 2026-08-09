@@ -49,6 +49,7 @@ class BackupSource(BaseModel):
 
     path: str = Field(min_length=1, max_length=4096)
     device_id: str = Field(min_length=3, max_length=64)
+    physical_device_id: str | None = Field(default=None, min_length=3, max_length=256)
     mount_point: str = Field(min_length=1, max_length=4096)
     filesystem_type: str = Field(min_length=1, max_length=64)
     estimated_size_bytes: int = Field(ge=0)
@@ -62,6 +63,7 @@ class BackupDestination(BaseModel):
     root_path: str = Field(min_length=1, max_length=4096)
     backup_path: str = Field(min_length=1, max_length=4096)
     device_id: str = Field(min_length=3, max_length=64)
+    physical_device_id: str | None = Field(default=None, min_length=3, max_length=256)
     mount_point: str = Field(min_length=1, max_length=4096)
     filesystem_type: str = Field(min_length=1, max_length=64)
     kind: BackupDestinationKind
