@@ -111,7 +111,13 @@ class CapabilityMetadata(BaseModel):
     internal_actions: tuple[str, ...]
     postchecks: tuple[str, ...]
     rollback: RollbackPolicy
+    requires_authorization: bool = False
     requires_protection_checkpoint: bool = False
+    supported_filesystems: tuple[str, ...] = ()
+    requires_unmounted: bool = False
+    supports_dry_run: bool = False
+    supports_verification: bool = False
+    supports_rollback: bool = False
     required_evidence: tuple[str, ...] = ()
     emitted_events: tuple[str, ...]
     metrics: tuple[str, ...]
