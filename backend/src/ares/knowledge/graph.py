@@ -28,6 +28,7 @@ class GraphKind(StrEnum):
     DISK = "disk"
     PARTITION = "partition"
     FILESYSTEM = "filesystem"
+    FILESYSTEM_STATUS = "filesystem_status"
     MOUNT_POINT = "mount_point"
     SMART_STATUS = "smart_status"
     OPERATING_SYSTEM = "operating_system"
@@ -36,6 +37,9 @@ class GraphKind(StrEnum):
     BACKUP_DESTINATION = "backup_destination"
     BACKUP_ENTRY = "backup_entry"
     BACKUP_VERIFICATION = "backup_verification"
+    PROTECTION_CHECKPOINT = "protection_checkpoint"
+    REPAIR_EXECUTION = "repair_execution"
+    REPAIR_VERIFICATION = "repair_verification"
     KERNEL = "kernel"
     DRIVER = "driver"
     SERVICE = "service"
@@ -108,30 +112,23 @@ class KnowledgeGraph:
         self._nodes = {node.id: node for node in snapshot.nodes}
         self._edges = {(edge.source, edge.relation, edge.target) for edge in snapshot.edges}
         self._revision = snapshot.revision
-        self.path.chmod(0o600)
 
     async def apply(
         self,
         nodes: tuple[GraphNode, ...],
         edges: tuple[GraphEdge, ...],
     ) -> GraphSnapshot:
-        """Upsert facts and persist one new revision."""
-
         async with self._lock:
-            next_nodes = dict(self._nodes)
-            next_edges = set(self._edges)
             for node in nodes:
-                next_nodes[node.id] = node
+                self._nodes[node.id] = node
+            known = set(self._nodes)
             for edge in edges:
-                if edge.source not in next_nodes or edge.target not in next_nodes:
-                    raise ValueError("graph edge references an unknown node")
-                next_edges.add((edge.source, edge.relation, edge.target))
-            next_revision = self._revision + 1
-            snapshot = self._snapshot_from(next_nodes, next_edges, next_revision)
-            await asyncio.to_thread(self._write_snapshot, snapshot)
-            self._nodes = next_nodes
-            self._edges = next_edges
-            self._revision = next_revision
+                if edge.source not in known or edge.target not in known:
+                    raise ValueError("graph edge refers to an unknown node")
+                self._edges.add((edge.source, edge.relation, edge.target))
+            self._revision += 1
+            snapshot = self._snapshot()
+            await asyncio.to_thread(self._write, snapshot)
             return snapshot
 
     async def snapshot(self) -> GraphSnapshot:
@@ -139,22 +136,16 @@ class KnowledgeGraph:
             return self._snapshot()
 
     def _snapshot(self) -> GraphSnapshot:
-        return self._snapshot_from(self._nodes, self._edges, self._revision)
-
-    @staticmethod
-    def _snapshot_from(
-        node_map: dict[str, GraphNode],
-        edge_set: set[tuple[str, str, str]],
-        revision: int,
-    ) -> GraphSnapshot:
-        nodes = tuple(node_map[key] for key in sorted(node_map))
-        edges = tuple(
-            GraphEdge(source=source, relation=relation, target=target)
-            for source, relation, target in sorted(edge_set)
+        return GraphSnapshot(
+            revision=self._revision,
+            nodes=tuple(sorted(self._nodes.values(), key=lambda node: node.id)),
+            edges=tuple(
+                GraphEdge(source=source, relation=relation, target=target)
+                for source, relation, target in sorted(self._edges)
+            ),
         )
-        return GraphSnapshot(revision=revision, nodes=nodes, edges=edges)
 
-    def _write_snapshot(self, snapshot: GraphSnapshot) -> None:
+    def _write(self, snapshot: GraphSnapshot) -> None:
         encoded = (
             json.dumps(
                 snapshot.model_dump(mode="json"),
@@ -167,7 +158,7 @@ class KnowledgeGraph:
         ).encode("utf-8")
         if len(encoded) > _MAX_GRAPH_BYTES:
             raise ValueError("knowledge graph exceeds its safety limit")
-        descriptor, temporary = tempfile.mkstemp(prefix=f".{self.path.name}.", dir=self.path.parent)
+        descriptor, temporary = tempfile.mkstemp(prefix=".graph.", dir=self.path.parent)
         try:
             with os.fdopen(descriptor, "wb") as handle:
                 handle.write(encoded)
