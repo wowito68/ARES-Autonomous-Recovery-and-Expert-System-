@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Annotated
 from uuid import uuid4
@@ -49,7 +50,13 @@ class BackupPlanRequest(BaseModel):
         if len(value) > 64:
             raise ValueError("too many exclusions")
         for name in value:
-            if not name or len(name) > 255 or name in {".", ".."} or "/" in name or "\x00" in name:
+            if (
+                not name
+                or len(name) > 255
+                or name in {".", ".."}
+                or "/" in name
+                or "\x00" in name
+            ):
                 raise ValueError("invalid exclusion name")
         return value
 
@@ -69,7 +76,7 @@ class BackupAccepted(BaseModel):
 
 
 class BackupService:
-    """Shared API/CLI orchestration; no endpoint or CLI command performs filesystem writes."""
+    """Shared API/CLI orchestration; endpoints never perform filesystem writes."""
 
     def __init__(
         self,
@@ -93,12 +100,17 @@ class BackupService:
         base_policy = BackupPolicy()
         policy = base_policy.model_copy(
             update={
-                "excluded_names": tuple(dict.fromkeys((*base_policy.excluded_names, *request.excluded_names)))
+                "excluded_names": tuple(
+                    dict.fromkeys((*base_policy.excluded_names, *request.excluded_names))
+                )
             }
         )
         try:
             plan = await asyncio.to_thread(
-                self.tools.build_plan, request.source, request.destination, policy
+                self.tools.build_plan,
+                request.source,
+                request.destination,
+                policy,
             )
         except BackupToolError as exc:
             raise BackupServiceError(exc.code) from exc
@@ -124,7 +136,7 @@ class BackupService:
                 },
             )
         )
-        try:
+        with suppress(AuditLedgerError):
             await self.audit.append(
                 event_type="backup.planned",
                 source="ares-api",
@@ -140,9 +152,6 @@ class BackupService:
                     "available_bytes": plan.destination.available_bytes,
                 },
             )
-        except AuditLedgerError:
-            # Planning is read-only. Execution still fails closed in the broker if the ledger is absent.
-            pass
         return plan
 
     async def create(
@@ -195,7 +204,13 @@ class BackupService:
         )
         await self.store.put_backup(backup)
         task = asyncio.create_task(
-            self._run_create(backup.id, plan.id, session_id, created_by, workflow_id),
+            self._run_create(
+                backup.id,
+                plan.id,
+                session_id,
+                created_by,
+                workflow_id,
+            ),
             name=f"backup-create-{backup.id}",
         )
         async with self._task_lock:
@@ -229,7 +244,8 @@ class BackupService:
 
     async def verify(self, backup_id: str, *, session_id: str) -> BackupVerifyResult:
         execution = await self.capabilities.execute(
-            "backup.verify", {"backup_id": backup_id, "session_id": session_id}
+            "backup.verify",
+            {"backup_id": backup_id, "session_id": session_id},
         )
         if execution.status is not ExecutionStatus.SUCCEEDED or execution.result is None:
             raise BackupServiceError(execution.error_code or "BACKUP_VERIFY_FAILED")
@@ -250,7 +266,9 @@ class BackupService:
         }:
             return backup
         workflow_id = backup.execution.workflow_execution_id
-        cancelled = await self.workflows.cancel(workflow_id) if workflow_id is not None else False
+        cancelled = (
+            await self.workflows.cancel(workflow_id) if workflow_id is not None else False
+        )
         if not cancelled:
             async with self._task_lock:
                 task = self._tasks.get(backup_id)
@@ -291,7 +309,11 @@ class BackupService:
         try:
             execution = await self.capabilities.execute(
                 "backup.create",
-                {"plan_id": plan_id, "session_id": session_id, "created_by": created_by},
+                {
+                    "plan_id": plan_id,
+                    "session_id": session_id,
+                    "created_by": created_by,
+                },
                 execution_id=workflow_id,
             )
             if execution.status is ExecutionStatus.SUCCEEDED and execution.result is not None:
@@ -299,7 +321,8 @@ class BackupService:
             else:
                 await self._mark_terminal_failure(
                     backup_id,
-                    execution.error_code or (
+                    execution.error_code
+                    or (
                         "BACKUP_CANCELLED"
                         if execution.status is ExecutionStatus.CANCELLED
                         else "BACKUP_CREATE_FAILED"
@@ -307,7 +330,11 @@ class BackupService:
                     cancelled=execution.status is ExecutionStatus.CANCELLED,
                 )
         except asyncio.CancelledError:
-            await self._mark_terminal_failure(backup_id, "BACKUP_CANCELLED", cancelled=True)
+            await self._mark_terminal_failure(
+                backup_id,
+                "BACKUP_CANCELLED",
+                cancelled=True,
+            )
         except Exception:
             await self._mark_terminal_failure(backup_id, "BACKUP_CREATE_FAILED")
         finally:
@@ -315,10 +342,17 @@ class BackupService:
                 self._tasks.pop(backup_id, None)
 
     async def _mark_terminal_failure(
-        self, backup_id: str, code: str, *, cancelled: bool = False
+        self,
+        backup_id: str,
+        code: str,
+        *,
+        cancelled: bool = False,
     ) -> None:
         backup = await self.store.get_backup(backup_id)
-        if backup is None or backup.status in {BackupStatus.COMPLETED, BackupStatus.CORRUPTED}:
+        if backup is None or backup.status in {
+            BackupStatus.COMPLETED,
+            BackupStatus.CORRUPTED,
+        }:
             return
         status = BackupStatus.CANCELLED if cancelled else BackupStatus.FAILED
         execution = backup.execution.model_copy(
