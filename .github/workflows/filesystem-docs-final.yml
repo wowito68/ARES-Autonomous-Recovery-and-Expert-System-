@@ -1,0 +1,181 @@
+name: Filesystem Repair Docs Final
+
+on:
+  push:
+    branches:
+      - agent/filesystem-recovery-repair
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Wait for validated product tree and synchronize
+        run: |
+          sleep 120
+          git fetch origin agent/filesystem-recovery-repair
+          git reset --hard origin/agent/filesystem-recovery-repair
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.11.14"
+          python-version: "3.12"
+          working-directory: backend
+      - name: Append required architecture documentation
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          marker = '<!-- ARES FILESYSTEM REPAIR 1.0 FINAL -->'
+          sections = {
+            'docs/architecture.md': '''## Filesystem Recovery & Repair\n`filesystem.repair` is the first high-risk mutating vertical slice. The enforced chain is Inspect → immutable RepairPlan → exact verified ProtectionCheckpoint → independent consent → CapabilityManager → server-owned Workflow → privileged broker → fixed filesystem adapter → structured verification → Knowledge Graph/Audit. FastAPI never receives raw-device write authority.''',
+            'docs/security.md': '''## Filesystem repair defense in depth\nHigh-risk repair requires exact target fingerprint, mount-safety preflight, durable checkpoint reload inside the broker, expiring one-use consent and post-repair verification. FastAPI remains unprivileged with `PrivateDevices=yes`; `ares-tool-broker` alone receives CAP_SYS_ADMIN for mount/unmount and remains network-denied/systemd-confined. There is no force-unmount, ext `-y`, XFS `-L`, Btrfs `--repair`, or bypass flag.''',
+            'docs/agent-and-tools.md': '''## Agent and filesystem repair\nThe Agent may identify repair intent but cannot place a device, command, tool name or argv into the `filesystem.repair` execution schema. It must inspect an explicit target first and ask when multiple targets are plausible. Tools return structured identity/check/repair/verification evidence; adapters alone define fixed low-level invocations.''',
+            'docs/data.md': '''## Filesystem repair data\nPrivate capability state persists inspections, RepairPlans, execution records, RepairVerification and ProtectionCheckpoints. Device identity includes major/minor, filesystem UUID, PARTUUID and available stable metadata, summarized by a SHA-256 fingerprint. Audit stores target/tool/safe arguments/operator/checkpoint/timestamps/results but not file contents, credentials, secrets or tokens.''',
+            'docs/api.md': '''## Filesystem repair API\nEndpoints: `POST /filesystems/inspect`, `POST /filesystems/repair/plan`, `POST /filesystems/repair`, `GET /filesystems/repairs/{id}`, `GET /filesystems/repairs/{id}/verification`, and `POST /filesystems/repairs/{id}/cancel`. Multi-request high-risk flows preserve `X-ARES-Session-ID`; `X-Request-ID` remains per-request correlation. Endpoints delegate all business decisions to FilesystemRepairService.''',
+            'docs/roadmap.md': '''## Filesystem Recovery & Repair completed increment\nImplemented adapter-based detection/check for ext2/ext3/ext4, XFS, Btrfs and NTFS; real repair for ext-family/XFS and limited NTFS; Btrfs mutation remains unsupported. Exact identity, MountSafetyChecker, verified ProtectionCheckpoint, independent authorization, broker isolation, structured verification, API/CLI/frontend/Agent, KG and durable audit are integrated. Next recommended increment: verified `backup.restore` plus snapshot/block-image checkpoint providers to strengthen recovery after destructive maintenance.''',
+          }
+          for name, section in sections.items():
+              path = Path(name)
+              text = path.read_text(encoding='utf-8')
+              if marker not in text:
+                  path.write_text(text.rstrip() + '\n\n' + marker + '\n' + section + '\n', encoding='utf-8')
+          PY
+      - name: Write permanent strict Backend CI
+        run: |
+          cat > .github/workflows/backend-ci.yml <<'EOF'
+          name: Backend CI
+
+          on:
+            push:
+            pull_request:
+            workflow_dispatch:
+
+          permissions:
+            contents: read
+
+          jobs:
+            quality:
+              name: Python quality and build
+              runs-on: ubuntu-latest
+              timeout-minutes: 15
+              defaults:
+                run:
+                  working-directory: backend
+              steps:
+                - uses: actions/checkout@v6
+                  with:
+                    persist-credentials: false
+                - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+                  with:
+                    version: "0.11.14"
+                    python-version: "3.12"
+                    working-directory: backend
+                - run: uv sync --frozen --dev
+                - run: uv run --frozen ruff format --check src tests
+                - run: uv run --frozen ruff check src tests
+                - run: uv run --frozen mypy
+                - run: uv build
+
+            tests:
+              name: Tests / Python ${{ matrix.python-version }}
+              runs-on: ubuntu-latest
+              timeout-minutes: 25
+              strategy:
+                fail-fast: false
+                matrix:
+                  python-version: ["3.12", "3.13"]
+              defaults:
+                run:
+                  working-directory: backend
+              steps:
+                - uses: actions/checkout@v6
+                  with:
+                    persist-credentials: false
+                - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+                  with:
+                    version: "0.11.14"
+                    python-version: ${{ matrix.python-version }}
+                    working-directory: backend
+                - run: uv sync --frozen --dev
+                - run: uv run --frozen pytest --cov-report=term-missing
+
+            static-syntax:
+              name: Shell and UI syntax
+              runs-on: ubuntu-latest
+              timeout-minutes: 10
+              steps:
+                - uses: actions/checkout@v6
+                  with:
+                    persist-credentials: false
+                - name: Validate tracked shell scripts
+                  shell: bash
+                  run: |
+                    set -euo pipefail
+                    checked=0
+                    while IFS= read -r -d '' file; do
+                      first_line="$(head -n 1 "$file" || true)"
+                      case "$first_line" in
+                        *bash*) bash -n "$file"; checked=$((checked + 1));;
+                        *"/sh"*) dash -n "$file"; checked=$((checked + 1));;
+                      esac
+                    done < <(git ls-files -z)
+                    echo "Validated ${checked} tracked shell scripts."
+                - name: Validate platform JavaScript
+                  run: |
+                    node --check live/config/includes.chroot/usr/share/ares/platform/app.js
+                    node --check live/config/includes.chroot/usr/share/ares/platform/storage.js
+                    node --check live/config/includes.chroot/usr/share/ares/platform/backup.js
+                    node --check live/config/includes.chroot/usr/share/ares/platform/filesystem.js
+          EOF
+      - name: Re-run strict Python 3.12 gates
+        working-directory: backend
+        run: |
+          uv sync --frozen --dev --python 3.12
+          uv run --frozen ruff format --check src tests
+          uv run --frozen ruff check src tests
+          uv run --frozen mypy
+          uv build
+          uv run --frozen pytest --junitxml=/tmp/final-junit.xml --cov-report=term-missing --cov-report=xml:/tmp/final-coverage.xml
+      - name: Validate shell and UI in final tree
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' file; do
+            first_line="$(head -n 1 "$file" || true)"
+            case "$first_line" in
+              *bash*) bash -n "$file";;
+              *"/sh"*) dash -n "$file";;
+            esac
+          done < <(git ls-files -z)
+          node --check live/config/includes.chroot/usr/share/ares/platform/app.js
+          node --check live/config/includes.chroot/usr/share/ares/platform/storage.js
+          node --check live/config/includes.chroot/usr/share/ares/platform/backup.js
+          node --check live/config/includes.chroot/usr/share/ares/platform/filesystem.js
+      - name: Remove all temporary filesystem workflows
+        run: |
+          rm -f .github/workflows/filesystem-maintenance.yml
+          rm -f .github/workflows/filesystem-finalize.yml
+          rm -f .github/workflows/filesystem-release-verification.yml
+          rm -f .github/workflows/filesystem-release-verification-v2.yml
+          rm -f .github/workflows/filesystem-quality-patch.yml
+          rm -f .github/workflows/filesystem-async-test-patch.yml
+          rm -f .github/workflows/filesystem-release-v3.yml
+          rm -f .github/workflows/filesystem-docs-final.yml
+      - name: Publish final docs and permanent CI
+        run: |
+          git config user.name "ARES Docs Final"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "docs: finalize filesystem repair architecture and CI"
+          git pull --rebase origin agent/filesystem-recovery-repair
+          git push origin HEAD:agent/filesystem-recovery-repair
+      - name: Mark PR ready after final gates
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr ready 4 --repo wowito68/ARES-Autonomous-Recovery-and-Expert-System-
