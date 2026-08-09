@@ -24,6 +24,8 @@ from ares.tools.backup import BackupFilesystemTools, BackupToolError
 AuthorizationCallback = Callable[[str], Awaitable[None]]
 ProgressCallback = Callable[[BackupProgress], Awaitable[None]]
 EntryCallback = Callable[[BackupEntry], Awaitable[None]]
+_MAX_REQUEST_BYTES = 4_000_000
+_MAX_RESPONSE_BYTES = 128_000_000
 
 
 class BackupExecutorError(Exception):
@@ -59,7 +61,7 @@ class LocalTestBackupExecutor:
     def __init__(self, tools: BackupFilesystemTools, *, authorize: bool = True) -> None:
         self.tools = tools
         self.authorize = authorize
-        self._grants: dict[str, str] = {}
+        self._grants: dict[str, AuthorizationGrant] = {}
 
     async def request_authorization(
         self,
@@ -68,20 +70,20 @@ class LocalTestBackupExecutor:
         session_id: str,
         on_challenge: AuthorizationCallback,
     ) -> AuthorizationGrant:
-        del session_id
         challenge_id = f"test-{uuid4().hex}"
         await on_challenge(challenge_id)
         if not self.authorize:
             raise BackupExecutorError("BACKUP_AUTHORIZATION_DENIED")
-        grant_id = uuid4().hex
-        self._grants[grant_id] = plan.fingerprint_sha256
-        return AuthorizationGrant(
-            id=grant_id,
+        grant = AuthorizationGrant(
+            id=uuid4().hex,
             challenge_id=challenge_id,
             plan_id=plan.id,
+            session_id=session_id,
             plan_fingerprint_sha256=plan.fingerprint_sha256,
             expires_at=datetime.now(UTC) + timedelta(minutes=5),
         )
+        self._grants[grant.id] = grant
+        return grant
 
     async def create(
         self,
@@ -91,8 +93,13 @@ class LocalTestBackupExecutor:
         on_progress: ProgressCallback,
         on_entry: EntryCallback,
     ) -> BackupManifest:
-        fingerprint = self._grants.pop(grant.id, None)
-        if fingerprint != plan.fingerprint_sha256 or grant.expires_at <= datetime.now(UTC):
+        stored = self._grants.pop(grant.id, None)
+        if (
+            stored != grant
+            or grant.plan_fingerprint_sha256 != plan.fingerprint_sha256
+            or grant.plan_id != plan.id
+            or grant.expires_at <= datetime.now(UTC)
+        ):
             raise BackupExecutorError("BACKUP_AUTHORIZATION_INVALID")
         try:
             return await self.tools.create_backup(plan, on_progress, on_entry)
@@ -124,7 +131,11 @@ class UnixBrokerBackupExecutor:
                     await on_challenge(challenge_id)
 
         result = await self._request(
-            {"action": "authorize", "plan": plan.model_dump(mode="json"), "session_id": session_id},
+            {
+                "action": "authorize",
+                "plan": plan.model_dump(mode="json"),
+                "session_id": session_id,
+            },
             handle,
         )
         try:
@@ -188,7 +199,7 @@ class UnixBrokerBackupExecutor:
             raise BackupExecutorError("BACKUP_BROKER_UNAVAILABLE") from exc
         try:
             encoded = json.dumps(request, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-            if len(encoded) > 4_000_000:
+            if len(encoded) > _MAX_REQUEST_BYTES:
                 raise BackupExecutorError("BACKUP_BROKER_REQUEST_TOO_LARGE")
             writer.write(encoded + b"\n")
             await writer.drain()
@@ -199,7 +210,7 @@ class UnixBrokerBackupExecutor:
                     raise BackupExecutorError("BACKUP_BROKER_TIMEOUT") from exc
                 if not line:
                     raise BackupExecutorError("BACKUP_BROKER_DISCONNECTED")
-                if len(line) > 4_000_000:
+                if len(line) > _MAX_RESPONSE_BYTES:
                     raise BackupExecutorError("BACKUP_BROKER_RESPONSE_TOO_LARGE")
                 try:
                     message = json.loads(line)
