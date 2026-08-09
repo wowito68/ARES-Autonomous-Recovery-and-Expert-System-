@@ -33,7 +33,11 @@ jobs:
         run: uv sync --frozen --dev
 
       - name: Enforce formatting
-        run: uv run --frozen ruff format --check src tests
+        run: |
+          if ! uv run --frozen ruff format --check src tests; then
+            uv run --frozen ruff format --diff src tests
+            exit 1
+          fi
 
       - name: Enforce Ruff
         run: uv run --frozen ruff check src tests
