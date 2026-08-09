@@ -351,14 +351,14 @@ class StorageToolSuite:
             )
             return state, None
         except (FileNotFoundError, PermissionError, OSError, ValueError) as exc:
-            reason = str(exc) or "command_failed"
-            state = ToolAvailability(tool=tool, available=False, reason=reason[:64])
+            failure_reason = str(exc) or "command_failed"
+            state = ToolAvailability(tool=tool, available=False, reason=failure_reason[:64])
             await _tool_event(
                 event_bus, correlation_id, "tool.execution.completed", tool, state.reason
             )
             return state, None
-        reason = None if result.exit_code == 0 else "command_failed"
-        await _tool_event(event_bus, correlation_id, "tool.execution.completed", tool, reason)
+        result_reason: str | None = None if result.exit_code == 0 else "command_failed"
+        await _tool_event(event_bus, correlation_id, "tool.execution.completed", tool, result_reason)
         return state, result
 
     def _read_boot_inventory(self) -> tuple[BlockDeviceProbe, ...]:
