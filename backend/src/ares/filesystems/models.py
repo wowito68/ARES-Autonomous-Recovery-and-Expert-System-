@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ares.protection import ProtectionCheckpoint
+from ares.protection.models import ProtectionCheckpoint
 
 
 def utc_now() -> datetime:
@@ -169,6 +169,10 @@ class FilesystemRepairPlan(BaseModel):
     executable: bool
     fingerprint_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
 
+    @property
+    def protected_resource_id(self) -> str:
+        return f"filesystem:{self.target.fingerprint_sha256}"
+
 
 class FilesystemAuthorizationGrant(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -253,7 +257,8 @@ class FilesystemRepairInput(BaseModel):
     plan_id: str = Field(min_length=8, max_length=128)
     session_id: str = Field(min_length=8, max_length=128)
     created_by: str = Field(min_length=1, max_length=128)
-    protection_checkpoint: ProtectionCheckpoint
+    protected_resource_id: str = Field(min_length=8, max_length=128)
+    protected_resource_fingerprint_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
 class FilesystemRepairResult(BaseModel):
