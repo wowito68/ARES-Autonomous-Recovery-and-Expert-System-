@@ -1,0 +1,229 @@
+name: Backup final patch
+
+on:
+  push:
+    branches:
+      - agent/backup-snapshot-manager
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/backup-snapshot-manager
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.11.14"
+          python-version: "3.12"
+          working-directory: backend
+
+      - name: Wait for documentation maintenance and refresh branch
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 18); do
+            git pull --ff-only origin agent/backup-snapshot-manager || true
+            if grep -q "Backup & Snapshot Manager increment" docs/architecture.md; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Documentation maintenance did not finish." >&2
+          exit 1
+
+      - name: Install locked dependencies
+        working-directory: backend
+        run: uv sync --frozen --dev
+
+      - name: Emit canonical terminal event and write typed environment tests
+        shell: python
+        run: |
+          from pathlib import Path
+
+          service = Path("backend/src/ares/backup/service.py")
+          text = service.read_text(encoding="utf-8")
+          old = '''        await self.store.put_backup(
+                      backup.model_copy(update={"status": status, "execution": execution})
+                  )
+          '''
+          old = old.replace("        ", "", 1)
+          if "event_type=\"backup.cancelled\" if cancelled else \"backup.failed\"" not in text:
+              anchor = '        await self.store.put_backup(\n            backup.model_copy(update={"status": status, "execution": execution})\n        )\n'
+              if anchor not in text:
+                  raise RuntimeError("terminal backup store block not found")
+              replacement = anchor + '''        await self.event_bus.publish(
+                      AresEvent(
+                          event_type="backup.cancelled" if cancelled else "backup.failed",
+                          source="backup.service",
+                          correlation_id=backup.execution.workflow_execution_id or backup.id,
+                          session_id=backup.session_id,
+                          severity=EventSeverity.WARNING if cancelled else EventSeverity.ERROR,
+                          payload={"backup_id": backup.id, "error_code": code},
+                      )
+                  )
+          '''
+              replacement = replacement.replace("        ", "", 1)
+              text = text.replace(anchor, replacement, 1)
+          service.write_text(text, encoding="utf-8")
+
+          env_test = Path("backend/tests/test_backup_environment_failures.py")
+          env_test.write_text(r'''from __future__ import annotations
+
+          import os
+          import shutil
+          from datetime import UTC, datetime
+          from pathlib import Path
+          from typing import Any
+
+          import pytest
+
+          import ares.tools.backup as backup_module
+          from ares.backup.models import (
+              Backup,
+              BackupExecution,
+              BackupPlan,
+              BackupPolicy,
+              BackupProgress,
+              BackupStatus,
+              BackupVerificationStatus,
+          )
+          from ares.tools.backup import BackupFilesystemTools, BackupToolError
+
+
+          def _fixture(
+              tmp_path: Path,
+              *,
+              destination_fs: str = "ext4",
+          ) -> tuple[BackupFilesystemTools, Path, Path]:
+              source = tmp_path / "source"
+              destination = tmp_path / "destination"
+              source.mkdir()
+              destination.mkdir()
+              (source / "file.txt").write_text("data", encoding="utf-8")
+              device = os.stat(source).st_dev
+              source_device = f"{os.major(device)}:{os.minor(device)}"
+              mountinfo = tmp_path / "mountinfo"
+              mountinfo.write_text(
+                  f"36 25 {source_device} / {source} rw - ext4 /dev/sda1 rw\n"
+                  f"37 25 99:99 / {destination} rw - {destination_fs} /dev/sdb1 rw\n",
+                  encoding="utf-8",
+              )
+              return BackupFilesystemTools(mountinfo), source, destination
+
+
+          def _backup(plan: BackupPlan) -> Backup:
+              progress = BackupProgress(
+                  files_completed=plan.included_file_count,
+                  files_total=plan.included_file_count,
+                  bytes_completed=plan.source.estimated_size_bytes,
+                  bytes_total=plan.source.estimated_size_bytes,
+                  percent=100,
+                  eta_seconds=0,
+              )
+              return Backup(
+                  id=plan.backup_id,
+                  created_at=datetime.now(UTC),
+                  source=plan.source,
+                  destination=plan.destination,
+                  size=plan.source.estimated_size_bytes,
+                  file_count=plan.included_file_count,
+                  status=BackupStatus.VERIFYING,
+                  created_by="test",
+                  session_id="environment-session-123",
+                  plan_id=plan.id,
+                  execution=BackupExecution(
+                      backup_id=plan.backup_id,
+                      status=BackupStatus.VERIFYING,
+                      progress=progress,
+                  ),
+              )
+
+
+          def test_plan_rejects_incompatible_destination_filesystem(tmp_path: Path) -> None:
+              tools, source, destination = _fixture(tmp_path, destination_fs="tmpfs")
+
+              with pytest.raises(
+                  BackupToolError, match="BACKUP_DESTINATION_FILESYSTEM_INCOMPATIBLE"
+              ):
+                  tools.build_plan(str(source), str(destination), BackupPolicy())
+
+
+          def test_revalidation_detects_disconnected_destination(tmp_path: Path) -> None:
+              tools, source, destination = _fixture(tmp_path)
+              plan = tools.build_plan(str(source), str(destination), BackupPolicy())
+              destination.rmdir()
+
+              with pytest.raises(BackupToolError, match="BACKUP_DESTINATION_INVALID"):
+                  tools.revalidate_plan(plan)
+
+
+          def test_plan_reports_insufficient_source_permission(
+              tmp_path: Path,
+              monkeypatch: pytest.MonkeyPatch,
+          ) -> None:
+              tools, source, destination = _fixture(tmp_path)
+              original = backup_module.os.scandir
+
+              def denied(path: os.PathLike[str] | str) -> Any:
+                  if Path(path) == source:
+                      raise PermissionError("denied")
+                  return original(path)
+
+              monkeypatch.setattr(backup_module.os, "scandir", denied)
+              with pytest.raises(BackupToolError, match="BACKUP_SOURCE_NOT_READABLE"):
+                  tools.build_plan(str(source), str(destination), BackupPolicy())
+
+
+          async def test_backup_does_not_depend_on_external_copy_or_hash_tools(
+              tmp_path: Path,
+              monkeypatch: pytest.MonkeyPatch,
+          ) -> None:
+              tools, source, destination = _fixture(tmp_path)
+              monkeypatch.setattr(shutil, "which", lambda _: None)
+              plan = tools.build_plan(str(source), str(destination), BackupPolicy())
+
+              async def noop(_: Any) -> None:
+                  return None
+
+              manifest = await tools.create_backup(plan, noop, noop)
+              verification = await tools.verify_backup(_backup(plan), manifest)
+              assert manifest.file_count == 1
+              assert verification.status is BackupVerificationStatus.VERIFIED
+          '''.replace("          ", ""), encoding="utf-8")
+
+          main = Path("backend/src/ares/main.py")
+          text = main.read_text(encoding="utf-8")
+          text = text.replace("from fastapi.responses import HTMLResponse\n", "")
+          start = text.find('        index_path = resolved_settings.static_dir / "index.html"\n')
+          if start >= 0:
+              mount = text.find("        application.mount(\n", start)
+              if mount < 0:
+                  raise RuntimeError("static mount block not found")
+              text = text[:start] + text[mount:]
+          main.write_text(text, encoding="utf-8")
+
+      - name: Format all backend Python
+        working-directory: backend
+        run: uv run --frozen ruff format src tests
+
+      - name: Remove all temporary backup workflows and commit
+        run: |
+          git rm -f --ignore-unmatch \
+            .github/workflows/backup-slice-maintenance.yml \
+            .github/workflows/backup-slice-cleanup.yml \
+            .github/workflows/backup-security-patch.yml \
+            .github/workflows/backup-security-patch2.yml \
+            .github/workflows/backup-final-patch.yml
+          git add backend/src backend/tests docs live/config/includes.chroot/usr/share/ares/platform .github/workflows/backend-ci.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: finalize backup slice integration"
+          git pull --rebase origin agent/backup-snapshot-manager
+          git push origin HEAD:agent/backup-snapshot-manager
