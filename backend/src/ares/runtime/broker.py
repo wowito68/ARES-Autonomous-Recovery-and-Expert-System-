@@ -8,18 +8,28 @@ import json
 import os
 import socket
 import struct
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from uuid import uuid4
 
-from ares.audit.ledger import AuditLedgerError, UnixAuditLedgerClient
+from ares.audit.ledger import AuditLedger, AuditLedgerError, UnixAuditLedgerClient
 from ares.backup.models import AuthorizationGrant, Backup, BackupManifest, BackupPlan
 from ares.runtime.consent import UnixConsentClient
 from ares.tools.backup import BackupFilesystemTools, BackupToolError
 
 _MAX_REQUEST_BYTES = 4_000_000
 _MAX_RESPONSE_BYTES = 128_000_000
+BrokerSend = Callable[[dict[str, Any]], Awaitable[None]]
+
+
+class ConsentClient(Protocol):
+    async def request(self, plan: BackupPlan, session_id: str) -> dict[str, Any]: ...
+
+    async def wait(
+        self, challenge_id: str, timeout_seconds: float = 600.0
+    ) -> dict[str, Any]: ...
 
 
 class BackupBroker:
@@ -28,8 +38,8 @@ class BackupBroker:
     def __init__(
         self,
         tools: BackupFilesystemTools,
-        audit: UnixAuditLedgerClient,
-        consent: UnixConsentClient,
+        audit: AuditLedger,
+        consent: ConsentClient,
         *,
         allowed_client_uids: frozenset[int] = frozenset({971, 1000}),
         emergency_journal: Path = Path("/var/lib/ares/broker/reconciliation.jsonl"),
@@ -46,7 +56,7 @@ class BackupBroker:
         self,
         request: dict[str, Any],
         peer_uid: int,
-        send,
+        send: BrokerSend,
     ) -> dict[str, Any]:
         if peer_uid not in self.allowed_client_uids:
             raise PermissionError("broker client not authorized")
@@ -59,12 +69,14 @@ class BackupBroker:
             return await self._verify(request)
         raise BackupToolError("BACKUP_BROKER_ACTION_REJECTED")
 
-    async def _authorize(self, request: dict[str, Any], send) -> dict[str, Any]:
+    async def _authorize(
+        self, request: dict[str, Any], send: BrokerSend
+    ) -> dict[str, Any]:
         plan = BackupPlan.model_validate(request.get("plan"))
         session_id = request.get("session_id")
         if not isinstance(session_id, str) or len(session_id) < 8:
             raise BackupToolError("BACKUP_SESSION_INVALID")
-        self.tools.revalidate_plan(plan)
+        await asyncio.to_thread(self.tools.revalidate_plan, plan)
         await self.audit.append(
             event_type="backup.authorization.intent",
             source="ares-tool-broker",
@@ -89,11 +101,12 @@ class BackupBroker:
         decision = await self.consent.wait(challenge_id)
         if decision.get("decision") != "approved":
             raise BackupToolError("BACKUP_AUTHORIZATION_DENIED")
-        self.tools.revalidate_plan(plan)
+        await asyncio.to_thread(self.tools.revalidate_plan, plan)
         grant = AuthorizationGrant(
             id=uuid4().hex,
             challenge_id=challenge_id,
             plan_id=plan.id,
+            session_id=session_id,
             plan_fingerprint_sha256=plan.fingerprint_sha256,
             expires_at=datetime.now(UTC) + timedelta(minutes=5),
         )
@@ -114,10 +127,12 @@ class BackupBroker:
         )
         return grant.model_dump(mode="json")
 
-    async def _create(self, request: dict[str, Any], send) -> dict[str, Any]:
+    async def _create(
+        self, request: dict[str, Any], send: BrokerSend
+    ) -> dict[str, Any]:
         plan = BackupPlan.model_validate(request.get("plan"))
         grant = AuthorizationGrant.model_validate(request.get("grant"))
-        self.tools.revalidate_plan(plan)
+        await asyncio.to_thread(self.tools.revalidate_plan, plan)
         async with self._lock:
             stored = self._grants.pop(grant.id, None)
         if (
@@ -128,7 +143,7 @@ class BackupBroker:
             or grant.plan_fingerprint_sha256 != plan.fingerprint_sha256
         ):
             raise BackupToolError("BACKUP_AUTHORIZATION_INVALID")
-        session_id = f"grant-{grant.challenge_id}"
+        session_id = grant.session_id
         await self.audit.append(
             event_type="backup.execution.intent",
             source="ares-tool-broker",
@@ -260,7 +275,9 @@ async def serve_tool_broker(
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         async def send(message: dict[str, Any]) -> None:
-            encoded = json.dumps(message, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            encoded = json.dumps(
+                message, ensure_ascii=False, separators=(",", ":")
+            ).encode("utf-8")
             if len(encoded) > _MAX_RESPONSE_BYTES:
                 raise BackupToolError("BACKUP_BROKER_RESPONSE_TOO_LARGE")
             writer.write(encoded + b"\n")
@@ -294,7 +311,8 @@ def _peer_uid(writer: asyncio.StreamWriter) -> int:
     peer = writer.get_extra_info("socket")
     if peer is None or not hasattr(socket, "SO_PEERCRED"):
         return -1
-    credentials = peer.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+    size = struct.calcsize("3i")
+    credentials = peer.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, size)
     _, uid, _ = struct.unpack("3i", credentials)
     return uid
 
@@ -306,14 +324,18 @@ async def _unix_server(handler, socket_path: Path) -> asyncio.AbstractServer:
         inherited = socket.socket(fileno=3)
         inherited.setblocking(False)
         return await asyncio.start_unix_server(handler, sock=inherited)
+    await asyncio.to_thread(_prepare_socket_path, socket_path)
+    server = await asyncio.start_unix_server(handler, path=str(socket_path))
+    os.chmod(socket_path, 0o660)
+    return server
+
+
+def _prepare_socket_path(socket_path: Path) -> None:
     socket_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         socket_path.unlink()
     except FileNotFoundError:
         pass
-    server = await asyncio.start_unix_server(handler, path=str(socket_path))
-    os.chmod(socket_path, 0o660)
-    return server
 
 
 def _token(value: str) -> str:
