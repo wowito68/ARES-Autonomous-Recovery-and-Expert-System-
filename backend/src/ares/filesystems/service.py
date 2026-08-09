@@ -310,6 +310,9 @@ class FilesystemRepairService:
             )
         return plan
 
+    async def get_plan(self, plan_id: str) -> FilesystemRepairPlan | None:
+        return await self.store.get_plan(plan_id)
+
     async def start(
         self,
         request: FilesystemRepairStartRequest,
