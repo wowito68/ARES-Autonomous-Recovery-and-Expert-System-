@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -143,13 +144,17 @@ class FilesystemRepairService:
                 limitations.append(exc.code)
         else:
             limitations.append("verified_full_filesystem_backup_required")
-        missing_tools = tuple(item.tool for item in inspection.required_tools if not item.available)
+        missing_tools = tuple(
+            item.tool for item in inspection.required_tools if not item.available
+        )
         if missing_tools:
             limitations.append("required_tools_unavailable:" + ",".join(missing_tools))
         if inspection.mount.mounted and (
             not inspection.mount.safe_to_unmount or not inspection.mount.safe_to_remount
         ):
-            limitations.append("mounted_filesystem_cannot_be_safely_unmounted_and_restored")
+            limitations.append(
+                "mounted_filesystem_cannot_be_safely_unmounted_and_restored"
+            )
         if not inspection.writable:
             limitations.append("target_not_writable")
         if not inspection.repair_supported:
@@ -190,7 +195,10 @@ class FilesystemRepairService:
         actions = [
             RepairAction(
                 id="filesystem.revalidate-identity",
-                description="Revalidar identidad estable del dispositivo inmediatamente antes de escribir.",
+                description=(
+                    "Revalidar identidad estable del dispositivo inmediatamente antes de "
+                    "escribir."
+                ),
                 mutates_target=False,
             )
         ]
@@ -198,7 +206,10 @@ class FilesystemRepairService:
             actions.append(
                 RepairAction(
                     id="filesystem.safe-unmount",
-                    description="Desmontar únicamente si no hay swap, bind/nested mounts ni handles activos.",
+                    description=(
+                        "Desmontar únicamente si no hay swap, bind/nested mounts ni handles "
+                        "activos."
+                    ),
                     mutates_target=False,
                 )
             )
@@ -216,7 +227,9 @@ class FilesystemRepairService:
                 ),
                 RepairAction(
                     id="filesystem.verify",
-                    description="Repetir comprobación read-only y comparar evidencia antes/después.",
+                    description=(
+                        "Repetir comprobación read-only y comparar evidencia antes/después."
+                    ),
                     mutates_target=False,
                 ),
             )
@@ -225,10 +238,15 @@ class FilesystemRepairService:
             actions.append(
                 RepairAction(
                     id="filesystem.safe-remount",
-                    description="Remontar solo tras verificación sana y con opciones restaurables.",
+                    description=(
+                        "Remontar solo tras verificación sana y con opciones restaurables."
+                    ),
                     mutates_target=False,
                 )
             )
+        permissions = ("block-device.readwrite",)
+        if inspection.mount.mounted:
+            permissions += ("mount.manage",)
         draft = FilesystemRepairPlan(
             session_id=session_id,
             target=inspection.identity,
@@ -237,10 +255,7 @@ class FilesystemRepairService:
             detected_problems=problems,
             evidence=evidence,
             required_tools=inspection.required_tools,
-            required_permissions=(
-                "block-device.readwrite",
-                *("mount.manage",) if inspection.mount.mounted else (),
-            ),
+            required_permissions=permissions,
             estimated_duration_seconds=None,
             protection_checkpoint=checkpoint,
             repair_actions=tuple(actions),
@@ -258,8 +273,7 @@ class FilesystemRepairService:
             executable=executable,
             fingerprint_sha256="0" * 64,
         )
-        fingerprint = _plan_fingerprint(draft)
-        plan = draft.model_copy(update={"fingerprint_sha256": fingerprint})
+        plan = draft.model_copy(update={"fingerprint_sha256": _plan_fingerprint(draft)})
         await self.store.put_plan(plan)
         await self.event_bus.publish(
             AresEvent(
@@ -279,7 +293,7 @@ class FilesystemRepairService:
                 },
             )
         )
-        try:
+        with suppress(AuditLedgerError):
             await self.audit.append(
                 event_type="repair.planned",
                 source="filesystem.service",
@@ -294,8 +308,6 @@ class FilesystemRepairService:
                     "executable": plan.executable,
                 },
             )
-        except AuditLedgerError:
-            pass
         return plan
 
     async def start(
@@ -433,7 +445,9 @@ class FilesystemRepairService:
                         "error_code": "FILESYSTEM_REPAIR_CANCELLED",
                     }
                 )
-                await self.store.put_repair(record.model_copy(update={"execution": execution}))
+                await self.store.put_repair(
+                    record.model_copy(update={"execution": execution})
+                )
         except Exception:
             await self._mark_failed(plan.repair_id, "FILESYSTEM_REPAIR_FAILED")
         finally:
