@@ -1,0 +1,914 @@
+name: Filesystem Repair Release V6
+
+on:
+  push:
+    branches:
+      - agent/filesystem-recovery-repair
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Disable every older temporary workflow and sync
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for workflow in \
+            filesystem-maintenance.yml filesystem-finalize.yml \
+            filesystem-release-verification.yml filesystem-release-verification-v2.yml \
+            filesystem-quality-patch.yml filesystem-async-test-patch.yml \
+            filesystem-release-v3.yml filesystem-docs-final.yml \
+            filesystem-release-v4.yml filesystem-release-v5.yml; do
+            gh workflow disable "$workflow" --repo wowito68/ARES-Autonomous-Recovery-and-Expert-System- 2>/dev/null || true
+          done
+          sleep 15
+          git fetch origin agent/filesystem-recovery-repair
+          git reset --hard origin/agent/filesystem-recovery-repair
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.11.14"
+          python-version: "3.12"
+          working-directory: backend
+      - name: Apply complete idempotent product and typing patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def repl(path: str, old: str, new: str, count: int = 1) -> None:
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              if old in text:
+                  p.write_text(text.replace(old, new, count), encoding="utf-8")
+
+          # Stable HTTP session + inherited lifecycle regression.
+          repl(
+              "backend/tests/test_backup_vertical_slice.py",
+              "async def test_backup_store_and_service_listing_are_shared(app: FastAPI, tmp_path: Path) -> None:\n",
+              "async def test_backup_store_and_service_listing_are_shared(\n    client: AsyncClient, app: FastAPI, tmp_path: Path\n) -> None:\n    del client\n",
+          )
+          repl(
+              "backend/src/ares/api/routes/filesystems.py",
+              'return str(getattr(request.state, "request_id", "filesystem-session"))',
+              'return str(getattr(request.state, "session_id", "filesystem-session"))',
+          )
+          vertical = Path("backend/tests/test_filesystem_vertical_slice.py")
+          if vertical.exists():
+              vertical.write_text(
+                  vertical.read_text(encoding="utf-8").replace(
+                      'session_id="filesystem-api-request-123",',
+                      'session_id="filesystem-api-session-123",',
+                  ),
+                  encoding="utf-8",
+              )
+
+          # Models: runtime OS and read-only device evidence.
+          models_path = Path("backend/src/ares/filesystems/models.py")
+          models = models_path.read_text(encoding="utf-8")
+          if "import sys\n" not in models:
+              models = models.replace("from enum import StrEnum\n", "from enum import StrEnum\nimport sys\n", 1)
+          if "class RuntimeOperatingSystem" not in models:
+              models = models.replace(
+                  "class FilesystemHealth(StrEnum):\n",
+                  '''class RuntimeOperatingSystem(StrEnum):
+    LINUX = "linux"
+    WINDOWS = "windows"
+    OTHER = "other"
+    UNKNOWN = "unknown"
+
+
+def detect_runtime_os() -> RuntimeOperatingSystem:
+    if sys.platform.startswith("linux"):
+        return RuntimeOperatingSystem.LINUX
+    if sys.platform.startswith("win"):
+        return RuntimeOperatingSystem.WINDOWS
+    if sys.platform:
+        return RuntimeOperatingSystem.OTHER
+    return RuntimeOperatingSystem.UNKNOWN
+
+
+class FilesystemHealth(StrEnum):
+''',
+                  1,
+              )
+          if "read_only: bool | None = None" not in models:
+              models = models.replace(
+                  "    block_device: bool\n    fingerprint_sha256:",
+                  "    block_device: bool\n    read_only: bool | None = None\n    fingerprint_sha256:",
+                  1,
+              )
+          if "runtime_os: RuntimeOperatingSystem" not in models:
+              models = models.replace(
+                  "    identity: DeviceIdentity\n    filesystem: FilesystemType | None = None\n",
+                  "    identity: DeviceIdentity\n    runtime_os: RuntimeOperatingSystem = RuntimeOperatingSystem.UNKNOWN\n    filesystem: FilesystemType | None = None\n",
+                  1,
+              )
+              models = models.replace(
+                  "    target: DeviceIdentity\n    filesystem: FilesystemType\n",
+                  "    target: DeviceIdentity\n    runtime_os: RuntimeOperatingSystem = RuntimeOperatingSystem.UNKNOWN\n    filesystem: FilesystemType\n",
+                  1,
+              )
+          models_path.write_text(models, encoding="utf-8")
+
+          # Tool Layer port, OS/read-only evidence, exact disappearance semantics.
+          tools_path = Path("backend/src/ares/tools/filesystem.py")
+          tools = tools_path.read_text(encoding="utf-8")
+          if "from typing import Protocol\n" not in tools:
+              tools = tools.replace(
+                  "from collections.abc import Awaitable, Callable\n",
+                  "from collections.abc import Awaitable, Callable\nfrom typing import Protocol\n",
+                  1,
+              )
+          if "class MountSafetyProvider(Protocol):" not in tools:
+              tools = tools.replace(
+                  "class MountSafetyChecker:\n",
+                  "class MountSafetyProvider(Protocol):\n    def inspect(self, identity: DeviceIdentity) -> MountSafetyReport: ...\n\n\nclass MountSafetyChecker:\n",
+                  1,
+              )
+          tools = tools.replace(
+              "        mount_checker: MountSafetyChecker | None = None,\n",
+              "        mount_checker: MountSafetyProvider | None = None,\n",
+              1,
+          )
+          if "detect_runtime_os," not in tools:
+              tools = tools.replace(
+                  "    ToolRequirement,\n)",
+                  "    ToolRequirement,\n    detect_runtime_os,\n)",
+                  1,
+              )
+          tools = tools.replace(
+              "                identity=identity,\n                mount=mount,",
+              "                identity=identity,\n                runtime_os=detect_runtime_os(),\n                mount=mount,",
+          )
+          tools = tools.replace(
+              "            identity=identity,\n            filesystem=filesystem,",
+              "            identity=identity,\n            runtime_os=detect_runtime_os(),\n            filesystem=filesystem,",
+          )
+          tools = tools.replace(
+              '        writable = await asyncio.to_thread(os.access, identity.canonical_path, os.W_OK)\n',
+              '        writable = (\n            await asyncio.to_thread(os.access, identity.canonical_path, os.W_OK)\n            and identity.read_only is not True\n        )\n',
+              1,
+          )
+          tools = tools.replace(
+              '"MAJ:MIN,PATH,TYPE,SIZE,FSTYPE,UUID,PARTUUID,SERIAL,MODEL,MOUNTPOINTS",',
+              '"MAJ:MIN,PATH,TYPE,SIZE,RO,FSTYPE,UUID,PARTUUID,SERIAL,MODEL,MOUNTPOINTS",',
+              1,
+          )
+          if 'read_only = _boolean(lsblk.get("ro"))' not in tools:
+              tools = tools.replace(
+                  '        size = _integer(lsblk.get("size"), info.st_size if not block else 0)\n',
+                  '        size = _integer(lsblk.get("size"), info.st_size if not block else 0)\n        read_only = _boolean(lsblk.get("ro")) if block else None\n',
+                  1,
+              )
+              tools = tools.replace(
+                  '            "size_bytes": size,\n        }\n',
+                  '            "size_bytes": size,\n            "read_only": read_only,\n        }\n',
+                  1,
+              )
+              tools = tools.replace(
+                  '            block_device=block,\n            fingerprint_sha256=fingerprint,\n',
+                  '            block_device=block,\n            read_only=read_only,\n            fingerprint_sha256=fingerprint,\n',
+                  1,
+              )
+          old_revalidate = '''    async def revalidate(self, expected: DeviceIdentity) -> DeviceIdentity:
+        current = await self.identify(expected.requested_path)
+        if current.fingerprint_sha256 != expected.fingerprint_sha256:
+            raise FilesystemToolError("FILESYSTEM_DEVICE_IDENTITY_CHANGED")
+        return current
+'''
+          if old_revalidate in tools:
+              tools = tools.replace(
+                  old_revalidate,
+                  '''    async def revalidate(self, expected: DeviceIdentity) -> DeviceIdentity:
+        try:
+            current = await self.identify(expected.requested_path)
+        except FilesystemToolError as exc:
+            if exc.code == "FILESYSTEM_TARGET_NOT_FOUND":
+                raise FilesystemToolError("FILESYSTEM_DEVICE_DISAPPEARED") from exc
+            raise
+        if current.fingerprint_sha256 != expected.fingerprint_sha256:
+            raise FilesystemToolError("FILESYSTEM_DEVICE_IDENTITY_CHANGED")
+        return current
+''',
+                  1,
+              )
+          if "def _boolean(value: object) -> bool | None:" not in tools:
+              tools += '''
+
+
+def _boolean(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in {0, 1}:
+        return bool(value)
+    if isinstance(value, str) and value in {"0", "1"}:
+        return value == "1"
+    return None
+'''
+          tools_path.write_text(tools, encoding="utf-8")
+
+          # Service typing/runtime OS/abort/failure events.
+          service_path = Path("backend/src/ares/filesystems/service.py")
+          service = service_path.read_text(encoding="utf-8")
+          if "    ProtectionCheckpoint,\n" not in service:
+              service = service.replace(
+                  "from ares.protection import (\n",
+                  "from ares.protection import (\n    ProtectionCheckpoint,\n",
+                  1,
+              )
+          service = service.replace(
+              "        checkpoint = None\n",
+              "        checkpoint: ProtectionCheckpoint | None = None\n",
+              1,
+          )
+          service = service.replace(
+              '        permissions = ("block-device.readwrite",)\n',
+              '        permissions: tuple[str, ...] = ("block-device.readwrite",)\n',
+              1,
+          )
+          if "runtime_os=inspection.runtime_os," not in service:
+              service = service.replace(
+                  "            target=inspection.identity,\n            filesystem=inspection.filesystem,",
+                  "            target=inspection.identity,\n            runtime_os=inspection.runtime_os,\n            filesystem=inspection.filesystem,",
+                  1,
+              )
+          old_result = '''            if result.status is not ExecutionStatus.SUCCEEDED:
+                await self._mark_failed(
+                    plan.repair_id, result.error_code or "FILESYSTEM_REPAIR_FAILED"
+                )
+'''
+          if old_result in service:
+              service = service.replace(
+                  old_result,
+                  '''            if result.status is not ExecutionStatus.SUCCEEDED:
+                record = await self.store.get_repair(plan.repair_id)
+                if record is not None and record.execution.status in {
+                    RepairExecutionStatus.PLANNED,
+                    RepairExecutionStatus.AUTHORIZING,
+                }:
+                    await self.event_bus.publish(
+                        AresEvent(
+                            event_type="repair.aborted",
+                            source="filesystem.service",
+                            correlation_id=plan.repair_id,
+                            session_id=session_id,
+                            severity=EventSeverity.WARNING,
+                            payload={
+                                "repair_id": plan.repair_id,
+                                "error_code": result.error_code or "FILESYSTEM_REPAIR_ABORTED",
+                            },
+                        )
+                    )
+                    await self._mark_aborted(
+                        plan.repair_id,
+                        result.error_code or "FILESYSTEM_REPAIR_ABORTED",
+                    )
+                else:
+                    await self._mark_failed(
+                        plan.repair_id, result.error_code or "FILESYSTEM_REPAIR_FAILED"
+                    )
+''',
+                  1,
+              )
+          if "async def _mark_aborted" not in service:
+              service = service.replace(
+                  "    async def _mark_failed(self, repair_id: str, code: str) -> None:\n",
+                  '''    async def _mark_aborted(self, repair_id: str, code: str) -> None:
+        record = await self.store.get_repair(repair_id)
+        if record is None:
+            return
+        execution = record.execution.model_copy(
+            update={
+                "status": RepairExecutionStatus.ABORTED,
+                "finished_at": datetime.now(UTC),
+                "error_code": code,
+            }
+        )
+        await self.store.put_repair(record.model_copy(update={"execution": execution}))
+
+    async def _mark_failed(self, repair_id: str, code: str) -> None:
+''',
+                  1,
+              )
+          failed_tail = '''        await self.store.put_repair(record.model_copy(update={"execution": execution}))
+
+
+def _plan_fingerprint'''
+          if failed_tail in service and 'event_type="repair.failed"' not in service:
+              service = service.replace(
+                  failed_tail,
+                  '''        await self.store.put_repair(record.model_copy(update={"execution": execution}))
+        await self.event_bus.publish(
+            AresEvent(
+                event_type="repair.failed",
+                source="filesystem.service",
+                correlation_id=repair_id,
+                session_id=record.execution.session_id,
+                severity=EventSeverity.ERROR,
+                payload={"repair_id": repair_id, "error_code": code},
+            )
+        )
+
+
+def _plan_fingerprint''',
+                  1,
+              )
+          service_path.write_text(service, encoding="utf-8")
+
+          # Structured verification lifecycle/partial semantics.
+          action_path = Path("backend/src/ares/actions/filesystem_repair.py")
+          action = action_path.read_text(encoding="utf-8")
+          verify_marker = '''        if record is None:
+            raise ActionError("FILESYSTEM_REPAIR_RECORD_NOT_FOUND")
+        verification_status, message = _verification_status(plan, outcome)
+'''
+          if verify_marker in action:
+              action = action.replace(
+                  verify_marker,
+                  '''        if record is None:
+            raise ActionError("FILESYSTEM_REPAIR_RECORD_NOT_FOUND")
+        verifying_execution = record.execution.model_copy(
+            update={"status": RepairExecutionStatus.VERIFYING}
+        )
+        record = record.model_copy(update={"execution": verifying_execution})
+        await self.store.put_repair(record)
+        verification_status, message = _verification_status(plan, outcome)
+''',
+                  1,
+              )
+          partial_guard = '''    if any(
+        item in outcome.limitations
+        for item in ("repair_tool_failed", "repair_tool_reported_unresolved_errors")
+    ):
+        return (
+            RepairVerificationStatus.PARTIAL,
+            "La herramienta de reparación reportó errores no resueltos; no se declara éxito total.",
+        )
+'''
+          ntfs_marker = '    if plan.filesystem is FilesystemType.NTFS and outcome.repair_tool != "none":\n'
+          if partial_guard not in action and ntfs_marker in action:
+              action = action.replace(ntfs_marker, partial_guard + ntfs_marker, 1)
+          action_path.write_text(action, encoding="utf-8")
+
+          # Broker strict typing and durable checkpoint initialization.
+          broker_path = Path("backend/src/ares/runtime/filesystem_broker.py")
+          broker = broker_path.read_text(encoding="utf-8")
+          if "from collections.abc import Awaitable, Callable\n" not in broker:
+              broker = broker.replace(
+                  "import os\n",
+                  "import os\nfrom collections.abc import Awaitable, Callable\n",
+                  1,
+              )
+          if "FilesystemBrokerSend = Callable" not in broker:
+              marker = "from ares.tools.filesystem import FilesystemToolError, FilesystemToolSuite\n\n\n"
+              broker = broker.replace(
+                  marker,
+                  marker + "FilesystemBrokerSend = Callable[[dict[str, Any]], Awaitable[None]]\n\n\n",
+                  1,
+              )
+          broker = broker.replace(
+              "        send,\n    ) -> dict[str, Any]:",
+              "        send: FilesystemBrokerSend,\n    ) -> dict[str, Any]:",
+              1,
+          )
+          broker = broker.replace(
+              "    async def _authorize(self, request: dict[str, Any], send) -> dict[str, Any]:",
+              "    async def _authorize(\n        self, request: dict[str, Any], send: FilesystemBrokerSend\n    ) -> dict[str, Any]:",
+              1,
+          )
+          broker = broker.replace(
+              "    async def _execute(self, request: dict[str, Any], send) -> dict[str, Any]:",
+              "    async def _execute(\n        self, request: dict[str, Any], send: FilesystemBrokerSend\n    ) -> dict[str, Any]:",
+              1,
+          )
+          broker_path.write_text(broker, encoding="utf-8")
+
+          runtime_path = Path("backend/src/ares/runtime/broker.py")
+          runtime = runtime_path.read_text(encoding="utf-8")
+          checkpoint_marker = '''    checkpoint_store = ProtectionCheckpointStore(
+        Path("/var/lib/ares/capabilities/protection/checkpoints")
+    )
+'''
+          if checkpoint_marker in runtime and "checkpoint_store.prepare()" not in runtime:
+              runtime = runtime.replace(
+                  checkpoint_marker,
+                  checkpoint_marker + "    checkpoint_store.prepare()\n",
+                  1,
+              )
+          runtime_path.write_text(runtime, encoding="utf-8")
+
+          # Explicit composition typing.
+          main_path = Path("backend/src/ares/main.py")
+          main = main_path.read_text(encoding="utf-8")
+          if "FilesystemExecutor," not in main:
+              main = main.replace(
+                  "from ares.filesystems.executor import LocalTestFilesystemExecutor, UnixBrokerFilesystemExecutor\n",
+                  "from ares.filesystems.executor import (\n    FilesystemExecutor,\n    LocalTestFilesystemExecutor,\n    UnixBrokerFilesystemExecutor,\n)\n",
+                  1,
+              )
+          marker = "    backup_tools = BackupFilesystemTools()\n"
+          if marker in main and "filesystem_tools: FilesystemToolSuite | None" not in main:
+              main = main.replace(
+                  marker,
+                  marker + "    filesystem_tools: FilesystemToolSuite | None\n    filesystem_executor: FilesystemExecutor\n",
+                  1,
+              )
+          main_path.write_text(main, encoding="utf-8")
+
+          # Async-safe test fixture I/O.
+          tools_test = Path("backend/tests/test_filesystem_tools.py")
+          tt = tools_test.read_text(encoding="utf-8")
+          if "import asyncio\n" not in tt:
+              tt = tt.replace(
+                  "from __future__ import annotations\n\n",
+                  "from __future__ import annotations\n\nimport asyncio\n",
+                  1,
+              )
+          if "def _write_replacement_fixture" not in tt:
+              marker = "\n\ndef _image(tmp_path: Path) -> Path:\n"
+              helpers = '''
+
+def _write_replacement_fixture(source: Path, target: Path) -> None:
+    target.write_bytes(source.read_bytes() + b"changed")
+
+
+def _replace_fixture(source: Path, target: Path) -> None:
+    source.replace(target)
+'''
+              tt = tt.replace(marker, helpers + marker, 1)
+          tt = tt.replace(
+              '''    replacement = tmp_path / "replacement.img"
+    replacement.write_bytes(image.read_bytes() + b"changed")
+    replacement.replace(image)
+''',
+              '''    replacement = tmp_path / "replacement.img"
+    await asyncio.to_thread(_write_replacement_fixture, image, replacement)
+    await asyncio.to_thread(_replace_fixture, replacement, image)
+''',
+              1,
+          )
+          tools_test.write_text(tt, encoding="utf-8")
+
+          runtime_test = Path("backend/tests/test_filesystem_runtime.py")
+          rt = runtime_test.read_text(encoding="utf-8")
+          if "import asyncio\n" not in rt:
+              rt = rt.replace(
+                  "from __future__ import annotations\n\n",
+                  "from __future__ import annotations\n\nimport asyncio\n",
+                  1,
+              )
+          if "def _write_fixture(path: Path, data: bytes) -> None:" not in rt:
+              insert_at = rt.index("\n\nclass ")
+              rt = rt[:insert_at] + "\n\ndef _write_fixture(path: Path, data: bytes) -> None:\n    path.write_bytes(data)\n\n\ndef _mkdir_fixture(path: Path) -> None:\n    path.mkdir(parents=True, exist_ok=True)\n" + rt[insert_at:]
+          elif "def _mkdir_fixture(path: Path) -> None:" not in rt:
+              rt = rt.replace(
+                  "def _write_fixture(path: Path, data: bytes) -> None:\n    path.write_bytes(data)\n",
+                  "def _write_fixture(path: Path, data: bytes) -> None:\n    path.write_bytes(data)\n\n\ndef _mkdir_fixture(path: Path) -> None:\n    path.mkdir(parents=True, exist_ok=True)\n",
+                  1,
+              )
+          rt = rt.replace(
+              '    image.write_bytes(b"ARES filesystem repair fixture" * 1024)\n',
+              '    await asyncio.to_thread(\n        _write_fixture, image, b"ARES filesystem repair fixture" * 1024\n    )\n',
+              1,
+          )
+          rt = rt.replace("    source.mkdir()\n", "    await asyncio.to_thread(_mkdir_fixture, source)\n")
+          rt = rt.replace(
+              "    partial.mkdir(parents=True)\n",
+              "    await asyncio.to_thread(_mkdir_fixture, partial)\n",
+          )
+          runtime_test.write_text(rt, encoding="utf-8")
+
+          failure_test = Path("backend/tests/test_filesystem_failures.py")
+          ft = failure_test.read_text(encoding="utf-8")
+          if "def _write_fixture(path: Path, data: bytes) -> None:" not in ft:
+              insert_at = ft.index("\n\nclass ")
+              ft = ft[:insert_at] + "\n\ndef _write_fixture(path: Path, data: bytes) -> None:\n    path.write_bytes(data)\n\n\ndef _unlink_fixture(path: Path) -> None:\n    path.unlink()\n" + ft[insert_at:]
+          if "import asyncio\n" not in ft:
+              ft = ft.replace(
+                  "from __future__ import annotations\n\n",
+                  "from __future__ import annotations\n\nimport asyncio\n",
+                  1,
+              )
+          ft = ft.replace(
+              '    image.write_bytes(b"ARES failure fixture" * 512)\n',
+              '    await asyncio.to_thread(_write_fixture, image, b"ARES failure fixture" * 512)\n',
+              1,
+          )
+          ft = ft.replace(
+              "    Path(plan.target.canonical_path).unlink()\n",
+              "    await asyncio.to_thread(_unlink_fixture, Path(plan.target.canonical_path))\n",
+              1,
+          )
+          failure_test.write_text(ft, encoding="utf-8")
+
+          preflight = Path("backend/tests/test_filesystem_preflight_failures.py")
+          pt = preflight.read_text(encoding="utf-8")
+          if "import asyncio\n" not in pt:
+              pt = pt.replace(
+                  "from __future__ import annotations\n\n",
+                  "from __future__ import annotations\n\nimport asyncio\n",
+                  1,
+              )
+          if "    DeviceIdentity,\n" not in pt:
+              pt = pt.replace(
+                  "from ares.filesystems.models import (\n",
+                  "from ares.filesystems.models import (\n    DeviceIdentity,\n",
+                  1,
+              )
+          if "def _write_fixture(path: Path, data: bytes) -> None:" not in pt:
+              insert_at = pt.index("\n\nclass ")
+              pt = pt[:insert_at] + "\n\ndef _write_fixture(path: Path, data: bytes) -> None:\n    path.write_bytes(data)\n" + pt[insert_at:]
+          pt = pt.replace(
+              "    def inspect(self, identity) -> MountSafetyReport:\n",
+              "    def inspect(self, identity: DeviceIdentity) -> MountSafetyReport:\n",
+              1,
+          )
+          pt = pt.replace(
+              '    image.write_bytes(b"ARES preflight fixture" * 512)\n',
+              '    await asyncio.to_thread(_write_fixture, image, b"ARES preflight fixture" * 512)\n',
+              1,
+          )
+          preflight.write_text(pt, encoding="utf-8")
+
+          # UI session binding.
+          js = Path("live/config/includes.chroot/usr/share/ares/platform/filesystem.js")
+          js_text = js.read_text(encoding="utf-8")
+          if "const sessionId" not in js_text:
+              js_text = js_text.replace(
+                  '  const api = "/api/v1/filesystems";\n',
+                  '  const api = "/api/v1/filesystems";\n  const sessionId = `ui-${globalThis.crypto.randomUUID().replaceAll("-", "")}`;\n',
+                  1,
+              )
+          if '"X-ARES-Session-ID": sessionId' not in js_text:
+              js_text = js_text.replace(
+                  'headers: { "Content-Type": "application/json", ...(options.headers || {}) },',
+                  'headers: { "Content-Type": "application/json", "X-ARES-Session-ID": sessionId, ...(options.headers || {}) },',
+                  1,
+              )
+          js.write_text(js_text, encoding="utf-8")
+          PY
+      - name: Write known-good real ext4 image integration test
+        run: |
+          cat > backend/tests/test_filesystem_real_image.py <<'PY'
+          from __future__ import annotations
+
+          import asyncio
+          import shutil
+          from pathlib import Path
+          from typing import Any
+
+          import pytest
+
+          from ares.filesystems.executor import LocalTestFilesystemExecutor
+          from ares.filesystems.integrity import repair_plan_fingerprint
+          from ares.filesystems.models import (
+              FilesystemHealth,
+              FilesystemRepairPlan,
+              FilesystemType,
+              MountSafetyReport,
+              RepairAction,
+          )
+          from ares.protection import ProtectionCheckpoint, ProtectionCheckpointStatus
+          from ares.tools.filesystem import FilesystemToolSuite, MountSafetyChecker
+          from ares.tools.storage import SafeProcessRunner
+
+          REQUIRED_TOOLS = ("mkfs.ext4", "debugfs", "e2fsck", "blkid")
+
+
+          def _create_image(path: Path) -> None:
+              with path.open("wb") as handle:
+                  handle.truncate(32 * 1024 * 1024)
+
+
+          def test_real_ext4_image_is_detected_repaired_and_verified(tmp_path: Path) -> None:
+              missing = [tool for tool in REQUIRED_TOOLS if shutil.which(tool) is None]
+              if missing:
+                  pytest.skip("isolated ext4 tools unavailable: " + ",".join(missing))
+              image = tmp_path / "corrupted-ext4.img"
+              _create_image(image)
+
+              async def scenario() -> None:
+                  runner = SafeProcessRunner()
+                  created = await runner.run(
+                      "mkfs.ext4", ("-F", "-q", str(image)), timeout_seconds=60
+                  )
+                  assert created.exit_code == 0
+                  corrupted = await runner.run(
+                      "debugfs",
+                      (
+                          "-w",
+                          "-R",
+                          "set_super_value free_blocks_count 1",
+                          str(image),
+                      ),
+                      timeout_seconds=60,
+                  )
+                  assert corrupted.exit_code == 0
+                  tools = FilesystemToolSuite(
+                      runner=runner,
+                      mount_checker=MountSafetyChecker(scan_processes=False),
+                      allow_regular_file_targets=True,
+                  )
+                  executor = LocalTestFilesystemExecutor(tools)
+                  inspection = await executor.inspect(str(image))
+                  assert inspection.filesystem is FilesystemType.EXT4
+                  assert inspection.health is FilesystemHealth.INCONSISTENT
+                  resource_id = f"filesystem:{inspection.identity.fingerprint_sha256}"
+                  checkpoint = ProtectionCheckpoint(
+                      status=ProtectionCheckpointStatus.READY,
+                      protected_resources=(resource_id,),
+                      resource_fingerprints={resource_id: inspection.identity.fingerprint_sha256},
+                      provider_capability_id="backup.create",
+                      backup_id="real-image-backup-12345678",
+                      verification_id="real-image-verification-12345678",
+                      session_id="real-image-session-123",
+                      evidence_sha256="e" * 64,
+                      limitations=("synthetic checkpoint for isolated image fixture",),
+                  )
+                  draft = FilesystemRepairPlan(
+                      session_id="real-image-session-123",
+                      target=inspection.identity,
+                      filesystem=FilesystemType.EXT4,
+                      mount=MountSafetyReport(
+                          mounted=False,
+                          busy=False,
+                          swap=False,
+                          safe_to_unmount=False,
+                          safe_to_remount=False,
+                      ),
+                      detected_problems=inspection.check.problems if inspection.check else (),
+                      evidence=inspection.check.evidence if inspection.check else (),
+                      required_tools=inspection.required_tools,
+                      required_permissions=("block-device.readwrite",),
+                      protection_checkpoint=checkpoint,
+                      repair_actions=(
+                          RepairAction(
+                              id="filesystem.repair",
+                              description="Repair only isolated ext4 image",
+                              mutates_target=True,
+                          ),
+                      ),
+                      verification_steps=("Run e2fsck -f -n after repair",),
+                      rollback_strategy="Discardable image; no physical device",
+                      executable=True,
+                      fingerprint_sha256="0" * 64,
+                  )
+                  plan = draft.model_copy(
+                      update={"fingerprint_sha256": repair_plan_fingerprint(draft)}
+                  )
+                  challenges: list[str] = []
+
+                  async def challenge(value: str) -> None:
+                      challenges.append(value)
+
+                  grant = await executor.request_authorization(
+                      plan, on_challenge=challenge
+                  )
+                  stages: list[str] = []
+
+                  async def stage(name: str, payload: dict[str, Any]) -> None:
+                      del payload
+                      stages.append(name)
+
+                  outcome = await executor.execute(plan, grant, on_stage=stage)
+                  assert challenges
+                  assert outcome.before.health is FilesystemHealth.INCONSISTENT
+                  assert outcome.repair_tool == "e2fsck"
+                  assert outcome.repair_exit_code in {0, 1, 2}
+                  assert outcome.after.health is FilesystemHealth.HEALTHY
+                  assert "filesystem.repair-command.started" in stages
+                  assert "filesystem.verification.completed" in stages
+
+              asyncio.run(scenario())
+          PY
+      - name: Finalize docs and permanent Backend CI
+        run: |
+          mkdir -p docs/capabilities docs/adr
+          cat > docs/capabilities/filesystem-repair.md <<'EOF'
+          # Filesystem Recovery & Repair
+
+          `filesystem.repair@1.0.0` is ARES' first high-risk filesystem metadata mutation. The enforced sequence is Detect → Protect → Plan → Authorize → Execute → Verify. FastAPI and the LLM never receive raw-device write primitives, executable names or argv.
+
+          Automated repair adapters: ext2/ext3/ext4 (`e2fsck -f -n` then conservative `-p`, never `-y`); XFS (`xfs_repair -n` then `xfs_repair`, never `-L`); limited NTFS (`ntfsfix -n`/`ntfsfix`, classified PARTIAL after mutation). Btrfs is inspect/read-only-check only; `btrfs check --repair` is not automated.
+
+          Device identity is fingerprinted from canonical target, major/minor, filesystem UUID, PARTUUID, serial/model when available, size and kernel read-only evidence. Production targets must remain within `/dev`; regular files are enabled only for isolated tests.
+
+          MountSafetyChecker blocks automatic unmount for active swap, multiple/bind/nested mounts, active process cwd/root/exe/fd references, or options ARES cannot restore safely. There is no force-unmount path. Previously mounted filesystems remount only after healthy verification.
+
+          ProtectionCheckpoint is durable, session/resource/fingerprint-bound and broker-reloaded. The current provider promotes only a COMPLETED + VERIFIED backup of the full filesystem mount point on the matching device. It is file-level recovery evidence, not block/metadata rollback.
+
+          Consent is independent, expiring and one-use. The operator must type `I understand that this operation modifies the filesystem. APPROVE <plan-prefix>`. The grant binds session, plan, repair and exact target fingerprint.
+
+          Cancellation is allowed before the destructive phase; ARES does not force-kill a running metadata repair. Post-check determines SUCCESS/PARTIAL/FAILED/UNKNOWN; exit code alone never declares success. Crash/power-loss reconciliation marks nonterminal records ABORTED with no verification claim.
+          EOF
+          cat > docs/adr/0010-filesystem-repair-privilege-and-verification-boundary.md <<'EOF'
+          # ADR-0010: Filesystem repair privilege and verification boundary
+
+          ## Status
+          Accepted.
+
+          ## Decision
+          FastAPI remains unprivileged and `PrivateDevices=yes`. `ares-tool-broker` alone owns raw-device effects and mount management and therefore receives CAP_SYS_ADMIN, while retaining peer-UID checks, network denial and systemd confinement. Requests are semantic and typed; callers cannot choose shell, binary or argv. The broker independently validates plan SHA-256, reloads the durable exact-resource ProtectionCheckpoint, revalidates device identity/mount state before authorization and before execution, requires independent one-use consent, writes Audit Ledger intent before effects, and accepts success only after structured post-repair verification.
+
+          No force-unmount, ext `-y`, XFS `-L`, Btrfs `--repair`, or metadata rollback is exposed. CAP_SYS_ADMIN remains broad TCB debt; a narrower future mount helper is desirable.
+          EOF
+          python - <<'PY'
+          from pathlib import Path
+          marker = "<!-- ARES FILESYSTEM REPAIR 1.0 FINAL -->"
+          sections = {
+              "docs/architecture.md": "## Filesystem Recovery & Repair\nThe high-risk path is Inspect → immutable RepairPlan → exact durable ProtectionCheckpoint → independent consent → CapabilityManager/Workflow → privileged broker/fixed adapter → structured verification → historical Knowledge Graph/Audit. API and LLM do not own raw-device write authority.",
+              "docs/security.md": "## Filesystem repair defense in depth\nExact identity includes canonical target, major/minor, filesystem UUID, PARTUUID, available serial/model/size and read-only evidence. Repair requires MountSafetyChecker, durable checkpoint reload, one-use consent, broker revalidation, post-check and audit. FastAPI remains PrivateDevices=yes. Broker CAP_SYS_ADMIN is documented TCB debt; no bypass exists.",
+              "docs/agent-and-tools.md": "## Filesystem repair orchestration\nThe Agent can recognize repair intent but cannot submit device, command, tool or argv to filesystem.repair. It must inspect an explicit target and ask when multiple targets are plausible. Adapters alone own fixed filesystem-tool invocations.",
+              "docs/data.md": "## Filesystem repair records\nARES persists inspections, RepairPlans, executions, RepairVerification and exact-resource ProtectionCheckpoints. Audit stores target identity, fixed tool/safe arguments, operator, checkpoint, timestamps and structured result; never file contents, credentials, secrets or tokens.",
+              "docs/api.md": "## Filesystem repair API\nPOST /filesystems/inspect; POST /filesystems/repair/plan; POST /filesystems/repair; GET /filesystems/repairs/{id}; GET /filesystems/repairs/{id}/verification; POST /filesystems/repairs/{id}/cancel. Multi-request high-risk flows preserve X-ARES-Session-ID; X-Request-ID remains per-request correlation.",
+              "docs/roadmap.md": "## Filesystem Recovery & Repair increment\nImplemented ext-family/XFS repair, limited NTFS repair, Btrfs inspection-only, exact identity/read-only evidence, mount safety, verified checkpoint, independent authorization, broker isolation, post-verification, API/CLI/frontend/Agent, Knowledge Graph and Audit. Recommended next: verified backup.restore plus snapshot/block-image ProtectionCheckpoint providers.",
+          }
+          for name, section in sections.items():
+              path = Path(name)
+              text = path.read_text(encoding="utf-8")
+              if marker not in text:
+                  path.write_text(text.rstrip() + "\n\n" + marker + "\n" + section + "\n", encoding="utf-8")
+          PY
+          cat > .github/workflows/backend-ci.yml <<'EOF'
+          name: Backend CI
+
+          on:
+            push:
+            pull_request:
+            workflow_dispatch:
+
+          permissions:
+            contents: read
+
+          jobs:
+            quality:
+              name: Python quality and build
+              runs-on: ubuntu-latest
+              timeout-minutes: 15
+              defaults:
+                run:
+                  working-directory: backend
+              steps:
+                - uses: actions/checkout@v6
+                  with:
+                    persist-credentials: false
+                - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+                  with:
+                    version: "0.11.14"
+                    python-version: "3.12"
+                    working-directory: backend
+                - run: uv sync --frozen --dev
+                - run: uv run --frozen ruff format --check src tests
+                - run: uv run --frozen ruff check src tests
+                - run: uv run --frozen mypy
+                - run: uv build
+
+            tests:
+              name: Tests / Python ${{ matrix.python-version }}
+              runs-on: ubuntu-latest
+              timeout-minutes: 25
+              strategy:
+                fail-fast: false
+                matrix:
+                  python-version: ["3.12", "3.13"]
+              defaults:
+                run:
+                  working-directory: backend
+              steps:
+                - uses: actions/checkout@v6
+                  with:
+                    persist-credentials: false
+                - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+                  with:
+                    version: "0.11.14"
+                    python-version: ${{ matrix.python-version }}
+                    working-directory: backend
+                - run: uv sync --frozen --dev
+                - run: uv run --frozen pytest --cov-report=term-missing
+
+            static-syntax:
+              name: Shell and UI syntax
+              runs-on: ubuntu-latest
+              timeout-minutes: 10
+              steps:
+                - uses: actions/checkout@v6
+                  with:
+                    persist-credentials: false
+                - name: Validate tracked shell scripts
+                  shell: bash
+                  run: |
+                    set -euo pipefail
+                    checked=0
+                    while IFS= read -r -d '' file; do
+                      first_line="$(head -n 1 "$file" || true)"
+                      case "$first_line" in
+                        *bash*) bash -n "$file"; checked=$((checked + 1));;
+                        *"/sh"*) dash -n "$file"; checked=$((checked + 1));;
+                      esac
+                    done < <(git ls-files -z)
+                    echo "Validated ${checked} tracked shell scripts."
+                - name: Validate platform JavaScript
+                  run: |
+                    node --check live/config/includes.chroot/usr/share/ares/platform/app.js
+                    node --check live/config/includes.chroot/usr/share/ares/platform/storage.js
+                    node --check live/config/includes.chroot/usr/share/ares/platform/backup.js
+                    node --check live/config/includes.chroot/usr/share/ares/platform/filesystem.js
+          EOF
+      - name: Python 3.12 strict quality, build and tests
+        working-directory: backend
+        run: |
+          uv sync --frozen --dev --python 3.12
+          uv run --frozen ruff check --fix src tests || true
+          uv run --frozen ruff format src tests
+          uv run --frozen ruff format --check src tests
+          uv run --frozen ruff check src tests
+          uv run --frozen mypy
+          uv build
+          uv run --frozen pytest --junitxml=/tmp/j312.xml --cov-report=term-missing --cov-report=xml:/tmp/c312.xml
+      - name: Require actual ext4 repair and coverage >=85
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          junit = ET.parse('/tmp/j312.xml').getroot()
+          cases = [c for c in junit.iter('testcase') if c.attrib.get('name') == 'test_real_ext4_image_is_detected_repaired_and_verified']
+          if len(cases) != 1 or cases[0].find('skipped') is not None:
+              raise SystemExit('real ext4 repair test did not execute')
+          coverage = float(ET.parse('/tmp/c312.xml').getroot().attrib['line-rate']) * 100
+          if coverage < 85:
+              raise SystemExit(f'coverage below 85: {coverage:.2f}%')
+          PY
+      - name: Python 3.13 full tests
+        working-directory: backend
+        run: |
+          rm -rf .venv
+          uv sync --frozen --dev --python 3.13
+          uv run --frozen pytest --junitxml=/tmp/j313.xml --cov-report=term-missing --cov-report=xml:/tmp/c313.xml
+      - name: Final static syntax
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' file; do
+            first_line="$(head -n 1 "$file" || true)"
+            case "$first_line" in
+              *bash*) bash -n "$file";;
+              *"/sh"*) dash -n "$file";;
+            esac
+          done < <(git ls-files -z)
+          node --check live/config/includes.chroot/usr/share/ares/platform/app.js
+          node --check live/config/includes.chroot/usr/share/ares/platform/storage.js
+          node --check live/config/includes.chroot/usr/share/ares/platform/backup.js
+          node --check live/config/includes.chroot/usr/share/ares/platform/filesystem.js
+      - name: Write exact validation result
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          def stats(v):
+              j=ET.parse(f'/tmp/j{v}.xml').getroot(); c=ET.parse(f'/tmp/c{v}.xml').getroot()
+              return int(j.attrib.get('tests',0)), int(j.attrib.get('failures',0)), int(j.attrib.get('errors',0)), int(j.attrib.get('skipped',0)), float(c.attrib['line-rate'])*100
+          a=stats('312'); b=stats('313')
+          if b[4] < 85:
+              raise SystemExit(f'3.13 coverage below 85: {b[4]:.2f}%')
+          Path('docs/capabilities/filesystem-repair-validation.md').write_text(
+              f'# Filesystem Recovery & Repair — final validation\n\n| Python | Tests | Failures | Errors | Skipped | Coverage |\n|---|---:|---:|---:|---:|---:|\n|3.12|{a[0]}|{a[1]}|{a[2]}|{a[3]}|{a[4]:.2f}%|\n|3.13|{b[0]}|{b[1]}|{b[2]}|{b[3]}|{b[4]:.2f}%|\n\nRuff format/lint, strict mypy, build, tracked shell and all platform JavaScript syntax gates passed. The real temporary ext4 corruption→repair→read-only verification test executed and was not skipped. No physical disk or loop device is used.\n',
+              encoding='utf-8',
+          )
+          PY
+      - name: Remove every temporary filesystem workflow and publish
+        run: |
+          rm -f .github/workflows/filesystem-maintenance.yml
+          rm -f .github/workflows/filesystem-finalize.yml
+          rm -f .github/workflows/filesystem-release-verification.yml
+          rm -f .github/workflows/filesystem-release-verification-v2.yml
+          rm -f .github/workflows/filesystem-quality-patch.yml
+          rm -f .github/workflows/filesystem-async-test-patch.yml
+          rm -f .github/workflows/filesystem-release-v3.yml
+          rm -f .github/workflows/filesystem-docs-final.yml
+          rm -f .github/workflows/filesystem-release-v4.yml
+          rm -f .github/workflows/filesystem-release-v5.yml
+          rm -f .github/workflows/filesystem-release-v6.yml
+          git config user.name "ARES Filesystem Release V6"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "filesystem: publish final validated recovery repair increment"
+          git pull --rebase origin agent/filesystem-recovery-repair
+          git push origin HEAD:agent/filesystem-recovery-repair
+      - name: Run permanent Backend CI on exact final head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow enable backend-ci.yml --repo wowito68/ARES-Autonomous-Recovery-and-Expert-System- || true
+          gh workflow run backend-ci.yml --ref agent/filesystem-recovery-repair --repo wowito68/ARES-Autonomous-Recovery-and-Expert-System-
+          sleep 15
+          run_id="$(gh run list --repo wowito68/ARES-Autonomous-Recovery-and-Expert-System- --workflow backend-ci.yml --branch agent/filesystem-recovery-repair --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId')"
+          test -n "$run_id"
+          gh run watch "$run_id" --repo wowito68/ARES-Autonomous-Recovery-and-Expert-System- --exit-status
+          gh pr ready 4 --repo wowito68/ARES-Autonomous-Recovery-and-Expert-System-

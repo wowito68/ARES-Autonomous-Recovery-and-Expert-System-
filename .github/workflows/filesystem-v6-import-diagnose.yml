@@ -1,0 +1,39 @@
+name: Extract Filesystem V6 Import Error
+
+on:
+  push:
+    branches:
+      - agent/filesystem-recovery-repair
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Parse ImportError symbols
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sleep 10
+          run_id="$(gh run list --repo wowito68/ARES-Autonomous-Recovery-and-Expert-System- --workflow filesystem-release-v6.yml --branch agent/filesystem-recovery-repair --limit 1 --json databaseId --jq '.[0].databaseId')"
+          gh run view "$run_id" --repo wowito68/ARES-Autonomous-Recovery-and-Expert-System- --log-failed > /tmp/v6.log
+          mkdir -p .ci-diagnostics
+          rm -f .ci-diagnostics/v6-import-*.txt
+          grep -E "ImportError: cannot import name ['\"]" /tmp/v6.log | sed -E "s/.*ImportError: cannot import name ['\"]([^'\"]+)['\"] from ['\"]([^'\"]+)['\"].*/\1 from \2/" | sort -u | while read -r item; do
+            slug="$(printf '%s' "$item" | sed -E 's/[^A-Za-z0-9]+/-/g; s/^-+|-+$//g')"
+            printf '%s\n' "$item" > ".ci-diagnostics/v6-import-${slug}.txt"
+          done
+          grep -E "ImportError:|ModuleNotFoundError:" /tmp/v6.log | sort -u > .ci-diagnostics/v6-import-lines.txt || true
+          git config user.name "ARES CI Diagnostics"
+          git config user.email "actions@users.noreply.github.com"
+          git add .ci-diagnostics
+          git commit -m "ci: extract filesystem V6 import failure"
+          git push origin HEAD:agent/filesystem-recovery-repair

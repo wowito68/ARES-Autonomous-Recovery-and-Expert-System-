@@ -1,0 +1,41 @@
+name: Classify Filesystem V6 Python Failure
+
+on:
+  push:
+    branches:
+      - agent/filesystem-recovery-repair
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  classify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Classify failed Python gate from exact run log
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sleep 10
+          run_id="$(gh run list --repo wowito68/ARES-Autonomous-Recovery-and-Expert-System- --workflow filesystem-release-v6.yml --branch agent/filesystem-recovery-repair --limit 1 --json databaseId --jq '.[0].databaseId')"
+          gh run view "$run_id" --repo wowito68/ARES-Autonomous-Recovery-and-Expert-System- --log-failed > /tmp/v6.log
+          mkdir -p .ci-diagnostics
+          rm -f .ci-diagnostics/v6-python-*.txt
+          grep -Eq '(^|[[:space:]])(E[0-9]{3}|F[0-9]{3}|I[0-9]{3}|SIM[0-9]+|ASYNC[0-9]+|RUF[0-9]+|S[0-9]{3})' /tmp/v6.log && touch .ci-diagnostics/v6-python-ruff.txt || true
+          grep -Eq ': error:|Found [0-9]+ errors? in [0-9]+ files?' /tmp/v6.log && touch .ci-diagnostics/v6-python-mypy.txt || true
+          grep -Eq 'ERROR collecting|Interrupted: [0-9]+ errors? during collection' /tmp/v6.log && touch .ci-diagnostics/v6-python-pytest-collection.txt || true
+          grep -Eq '=+ FAILURES =+|[0-9]+ failed|FAILED backend/tests|FAILED tests/' /tmp/v6.log && touch .ci-diagnostics/v6-python-pytest-failures.txt || true
+          grep -Eq 'Coverage failure|FAIL Required test coverage' /tmp/v6.log && touch .ci-diagnostics/v6-python-coverage.txt || true
+          grep -Eq 'Failed to build|Build failed|error: failed to build|× Failed to build' /tmp/v6.log && touch .ci-diagnostics/v6-python-build.txt || true
+          cp /tmp/v6.log .ci-diagnostics/v6-python-failed.log
+          git config user.name "ARES CI Diagnostics"
+          git config user.email "actions@users.noreply.github.com"
+          git add .ci-diagnostics
+          git commit -m "ci: classify filesystem V6 Python failure"
+          git push origin HEAD:agent/filesystem-recovery-repair

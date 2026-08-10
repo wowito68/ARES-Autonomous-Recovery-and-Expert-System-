@@ -1,0 +1,262 @@
+name: Filesystem Repair Release V5
+
+on:
+  push:
+    branches:
+      - agent/filesystem-recovery-repair
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Disable older release workflows and sync
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for workflow in filesystem-release-v4.yml filesystem-release-v3.yml filesystem-docs-final.yml filesystem-release-verification-v2.yml; do
+            gh workflow disable "$workflow" --repo wowito68/ARES-Autonomous-Recovery-and-Expert-System- 2>/dev/null || true
+          done
+          sleep 15
+          git fetch origin agent/filesystem-recovery-repair
+          git reset --hard origin/agent/filesystem-recovery-repair
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.11.14"
+          python-version: "3.12"
+          working-directory: backend
+      - name: Make remaining async fixtures nonblocking
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('backend/tests/test_filesystem_tools.py')
+          text = path.read_text(encoding='utf-8')
+          if 'def _replace_fixture(source: Path, target: Path) -> None:' not in text:
+              marker = '\n\ndef _image(tmp_path: Path) -> Path:\n'
+              helper = '''
+
+def _replace_fixture(source: Path, target: Path) -> None:
+    source.replace(target)
+'''
+              text = text.replace(marker, helper + marker, 1)
+          old = '''    replacement = tmp_path / "replacement.img"
+    replacement.write_bytes(image.read_bytes() + b"changed")
+    replacement.replace(image)
+'''
+          new = '''    replacement = tmp_path / "replacement.img"
+    await asyncio.to_thread(
+        _write_replacement_fixture, image, replacement
+    )
+    await asyncio.to_thread(_replace_fixture, replacement, image)
+'''
+          if 'def _write_replacement_fixture' not in text:
+              marker = '\n\ndef _replace_fixture(source: Path, target: Path) -> None:\n'
+              helper = '''
+
+def _write_replacement_fixture(source: Path, target: Path) -> None:
+    target.write_bytes(source.read_bytes() + b"changed")
+'''
+              text = text.replace(marker, helper + marker, 1)
+          if 'import asyncio\n' not in text:
+              text = text.replace('from __future__ import annotations\n\n', 'from __future__ import annotations\n\nimport asyncio\n', 1)
+          if old in text:
+              text = text.replace(old, new, 1)
+          path.write_text(text, encoding='utf-8')
+
+          path = Path('backend/tests/test_filesystem_runtime.py')
+          text = path.read_text(encoding='utf-8')
+          if 'def _mkdir_fixture(path: Path) -> None:' not in text:
+              insert = '\n\ndef _mkdir_fixture(path: Path) -> None:\n    path.mkdir(parents=True, exist_ok=True)\n'
+              marker = '\n\ndef _write_fixture(path: Path, data: bytes) -> None:\n'
+              if marker in text:
+                  text = text.replace(marker, insert + marker, 1)
+              else:
+                  class_index = text.index('\n\nclass ')
+                  text = text[:class_index] + insert + text[class_index:]
+          text = text.replace('    source.mkdir()\n', '    await asyncio.to_thread(_mkdir_fixture, source)\n')
+          text = text.replace('    partial.mkdir(parents=True)\n', '    await asyncio.to_thread(_mkdir_fixture, partial)\n')
+          path.write_text(text, encoding='utf-8')
+          PY
+      - name: Ensure final product patches from V4 are present
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          # If V4 did not publish, preserve its key high-risk invariants in this retry.
+          models = Path('backend/src/ares/filesystems/models.py')
+          text = models.read_text(encoding='utf-8')
+          if 'read_only: bool | None = None' not in text:
+              text = text.replace(
+                  '    block_device: bool\n    fingerprint_sha256:',
+                  '    block_device: bool\n    read_only: bool | None = None\n    fingerprint_sha256:',
+                  1,
+              )
+          models.write_text(text, encoding='utf-8')
+
+          tools = Path('backend/src/ares/tools/filesystem.py')
+          text = tools.read_text(encoding='utf-8')
+          text = text.replace(
+              '        writable = await asyncio.to_thread(os.access, identity.canonical_path, os.W_OK)\n',
+              '        writable = (\n            await asyncio.to_thread(os.access, identity.canonical_path, os.W_OK)\n            and identity.read_only is not True\n        )\n',
+              1,
+          )
+          text = text.replace(
+              '"MAJ:MIN,PATH,TYPE,SIZE,FSTYPE,UUID,PARTUUID,SERIAL,MODEL,MOUNTPOINTS",',
+              '"MAJ:MIN,PATH,TYPE,SIZE,RO,FSTYPE,UUID,PARTUUID,SERIAL,MODEL,MOUNTPOINTS",',
+              1,
+          )
+          if 'read_only = _boolean(lsblk.get("ro"))' not in text:
+              text = text.replace(
+                  '        size = _integer(lsblk.get("size"), info.st_size if not block else 0)\n',
+                  '        size = _integer(lsblk.get("size"), info.st_size if not block else 0)\n        read_only = _boolean(lsblk.get("ro")) if block else None\n',
+                  1,
+              )
+              text = text.replace(
+                  '            "size_bytes": size,\n        }\n',
+                  '            "size_bytes": size,\n            "read_only": read_only,\n        }\n',
+                  1,
+              )
+              text = text.replace(
+                  '            block_device=block,\n            fingerprint_sha256=fingerprint,\n',
+                  '            block_device=block,\n            read_only=read_only,\n            fingerprint_sha256=fingerprint,\n',
+                  1,
+              )
+          if 'def _boolean(value: object) -> bool | None:' not in text:
+              text += '''
+
+
+def _boolean(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in {0, 1}:
+        return bool(value)
+    if isinstance(value, str) and value in {"0", "1"}:
+        return value == "1"
+    return None
+'''
+          tools.write_text(text, encoding='utf-8')
+
+          service = Path('backend/src/ares/filesystems/service.py')
+          text = service.read_text(encoding='utf-8')
+          failed_tail = '''        await self.store.put_repair(record.model_copy(update={"execution": execution}))
+
+
+def _plan_fingerprint'''
+          if failed_tail in text and 'event_type="repair.failed"' not in text:
+              text = text.replace(
+                  failed_tail,
+                  '''        await self.store.put_repair(record.model_copy(update={"execution": execution}))
+        await self.event_bus.publish(
+            AresEvent(
+                event_type="repair.failed",
+                source="filesystem.service",
+                correlation_id=repair_id,
+                session_id=record.execution.session_id,
+                severity=EventSeverity.ERROR,
+                payload={"repair_id": repair_id, "error_code": code},
+            )
+        )
+
+
+def _plan_fingerprint''',
+                  1,
+              )
+          service.write_text(text, encoding='utf-8')
+
+          runtime = Path('backend/src/ares/runtime/broker.py')
+          text = runtime.read_text(encoding='utf-8')
+          marker = '''    checkpoint_store = ProtectionCheckpointStore(
+        Path("/var/lib/ares/capabilities/protection/checkpoints")
+    )
+'''
+          if marker in text and 'checkpoint_store.prepare()' not in text:
+              text = text.replace(marker, marker + '    checkpoint_store.prepare()\n', 1)
+          runtime.write_text(text, encoding='utf-8')
+          PY
+      - name: Python 3.12 quality and tests
+        working-directory: backend
+        run: |
+          uv sync --frozen --dev --python 3.12
+          uv run --frozen ruff check --fix src tests || true
+          uv run --frozen ruff format src tests
+          uv run --frozen ruff format --check src tests
+          uv run --frozen ruff check src tests
+          uv run --frozen mypy
+          uv build
+          uv run --frozen pytest --junitxml=/tmp/j312.xml --cov-report=term-missing --cov-report=xml:/tmp/c312.xml
+      - name: Require real ext4 repair test and coverage gate
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          junit = ET.parse('/tmp/j312.xml').getroot()
+          cases = [c for c in junit.iter('testcase') if c.attrib.get('name') == 'test_real_ext4_image_is_detected_repaired_and_verified']
+          if len(cases) != 1 or cases[0].find('skipped') is not None:
+              raise SystemExit('real ext4 repair test did not execute successfully')
+          coverage = float(ET.parse('/tmp/c312.xml').getroot().attrib['line-rate']) * 100
+          if coverage < 85:
+              raise SystemExit(f'coverage below gate: {coverage:.2f}%')
+          PY
+      - name: Python 3.13 full tests
+        working-directory: backend
+        run: |
+          rm -rf .venv
+          uv sync --frozen --dev --python 3.13
+          uv run --frozen pytest --junitxml=/tmp/j313.xml --cov-report=term-missing --cov-report=xml:/tmp/c313.xml
+      - name: Static syntax
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' file; do
+            first_line="$(head -n 1 "$file" || true)"
+            case "$first_line" in
+              *bash*) bash -n "$file";;
+              *"/sh"*) dash -n "$file";;
+            esac
+          done < <(git ls-files -z)
+          node --check live/config/includes.chroot/usr/share/ares/platform/app.js
+          node --check live/config/includes.chroot/usr/share/ares/platform/storage.js
+          node --check live/config/includes.chroot/usr/share/ares/platform/backup.js
+          node --check live/config/includes.chroot/usr/share/ares/platform/filesystem.js
+      - name: Write exact validation and clean temporary workflows
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          def stats(v):
+              j=ET.parse(f'/tmp/j{v}.xml').getroot(); c=ET.parse(f'/tmp/c{v}.xml').getroot()
+              return int(j.attrib.get('tests',0)), int(j.attrib.get('failures',0)), int(j.attrib.get('errors',0)), int(j.attrib.get('skipped',0)), float(c.attrib['line-rate'])*100
+          a=stats('312'); b=stats('313')
+          Path('docs/capabilities/filesystem-repair-validation.md').write_text(
+              f'# Filesystem Recovery & Repair — final validation\n\n| Python | Tests | Failures | Errors | Skipped | Coverage |\n|---|---:|---:|---:|---:|---:|\n|3.12|{a[0]}|{a[1]}|{a[2]}|{a[3]}|{a[4]:.2f}%|\n|3.13|{b[0]}|{b[1]}|{b[2]}|{b[3]}|{b[4]:.2f}%|\n\nRuff format/lint, strict mypy, build, shell and all platform JavaScript syntax gates passed. The real temporary ext4 corruption→repair→verification test executed and was not skipped. No physical disk or loop device is used.\n',
+              encoding='utf-8',
+          )
+          PY
+          rm -f .github/workflows/filesystem-maintenance.yml .github/workflows/filesystem-finalize.yml .github/workflows/filesystem-release-verification.yml .github/workflows/filesystem-release-verification-v2.yml .github/workflows/filesystem-quality-patch.yml .github/workflows/filesystem-async-test-patch.yml .github/workflows/filesystem-release-v3.yml .github/workflows/filesystem-docs-final.yml .github/workflows/filesystem-release-v4.yml .github/workflows/filesystem-release-v5.yml
+      - name: Publish validated retry
+        run: |
+          git config user.name "ARES Filesystem Release V5"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "filesystem: publish strictly validated repair increment"
+          git pull --rebase origin agent/filesystem-recovery-repair
+          git push origin HEAD:agent/filesystem-recovery-repair
+      - name: Dispatch permanent exact-head Backend CI and mark ready
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow enable backend-ci.yml --repo wowito68/ARES-Autonomous-Recovery-and-Expert-System- || true
+          gh workflow run backend-ci.yml --ref agent/filesystem-recovery-repair --repo wowito68/ARES-Autonomous-Recovery-and-Expert-System-
+          sleep 15
+          run_id="$(gh run list --repo wowito68/ARES-Autonomous-Recovery-and-Expert-System- --workflow backend-ci.yml --branch agent/filesystem-recovery-repair --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId')"
+          test -n "$run_id"
+          gh run watch "$run_id" --repo wowito68/ARES-Autonomous-Recovery-and-Expert-System- --exit-status
+          gh pr ready 4 --repo wowito68/ARES-Autonomous-Recovery-and-Expert-System-

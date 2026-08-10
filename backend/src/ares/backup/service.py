@@ -50,13 +50,7 @@ class BackupPlanRequest(BaseModel):
         if len(value) > 64:
             raise ValueError("too many exclusions")
         for name in value:
-            if (
-                not name
-                or len(name) > 255
-                or name in {".", ".."}
-                or "/" in name
-                or "\x00" in name
-            ):
+            if not name or len(name) > 255 or name in {".", ".."} or "/" in name or "\x00" in name:
                 raise ValueError("invalid exclusion name")
         return value
 
@@ -266,9 +260,7 @@ class BackupService:
         }:
             return backup
         workflow_id = backup.execution.workflow_execution_id
-        cancelled = (
-            await self.workflows.cancel(workflow_id) if workflow_id is not None else False
-        )
+        cancelled = await self.workflows.cancel(workflow_id) if workflow_id is not None else False
         if not cancelled:
             async with self._task_lock:
                 task = self._tasks.get(backup_id)

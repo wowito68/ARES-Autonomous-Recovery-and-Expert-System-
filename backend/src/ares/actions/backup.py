@@ -155,7 +155,9 @@ class CreateBackupFilesAction:
             current = await self.store.get_backup(plan.backup_id)
             if current is not None:
                 current_execution = current.execution.model_copy(update={"progress": value})
-                await self.store.put_backup(current.model_copy(update={"execution": current_execution}))
+                await self.store.put_backup(
+                    current.model_copy(update={"execution": current_execution})
+                )
             await _event(
                 context,
                 "backup.progress",
@@ -178,7 +180,9 @@ class CreateBackupFilesAction:
                 "backup.entry.created",
                 {
                     "backup_id": plan.backup_id,
-                    "entry_token": hashlib.sha256(value.relative_path.encode("utf-8")).hexdigest()[:24],
+                    "entry_token": hashlib.sha256(value.relative_path.encode("utf-8")).hexdigest()[
+                        :24
+                    ],
                     "entry_type": value.entry_type.value,
                     "size_bytes": value.size_bytes,
                 },
@@ -186,9 +190,7 @@ class CreateBackupFilesAction:
             )
 
         try:
-            manifest = await self.executor.create(
-                plan, grant, on_progress=progress, on_entry=entry
-            )
+            manifest = await self.executor.create(plan, grant, on_progress=progress, on_entry=entry)
         except asyncio.CancelledError:
             await self._mark_cancelled(plan.backup_id)
             await _event(

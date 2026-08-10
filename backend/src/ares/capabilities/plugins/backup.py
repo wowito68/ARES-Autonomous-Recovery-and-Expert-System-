@@ -18,6 +18,7 @@ from ares.actions.backup import (
 )
 from ares.backup.executor import BackupExecutor
 from ares.backup.models import (
+    Backup,
     BackupCreateInput,
     BackupCreateResult,
     BackupGraphSummary,
@@ -27,7 +28,6 @@ from ares.backup.models import (
     BackupVerification,
     BackupVerifyInput,
     BackupVerifyResult,
-    Backup,
 )
 from ares.backup.store import BackupStore
 from ares.capabilities.base import Capability
@@ -247,9 +247,15 @@ class BackupVerifyCapability:
         estimated_duration_seconds=300,
         permissions=(
             PermissionRequirement(id="backup.metadata.read", reason="Leer metadata y manifest."),
-            PermissionRequirement(id="backup.verify.read", reason="Leer el destino para verificar hashes."),
-            PermissionRequirement(id="backup.metadata.write-local", reason="Persistir resultado de verificación."),
-            PermissionRequirement(id="knowledge.graph.write", reason="Actualizar el estado verificado del grafo."),
+            PermissionRequirement(
+                id="backup.verify.read", reason="Leer el destino para verificar hashes."
+            ),
+            PermissionRequirement(
+                id="backup.metadata.write-local", reason="Persistir resultado de verificación."
+            ),
+            PermissionRequirement(
+                id="knowledge.graph.write", reason="Actualizar el estado verificado del grafo."
+            ),
         ),
         internal_actions=(
             "backup.load-verification-target",
@@ -318,11 +324,15 @@ class BackupListCapability:
         risk=RiskLevel.LOW,
         estimated_duration_seconds=2,
         permissions=(
-            PermissionRequirement(id="backup.metadata.read", reason="Leer el índice local de backups."),
+            PermissionRequirement(
+                id="backup.metadata.read", reason="Leer el índice local de backups."
+            ),
         ),
         internal_actions=("backup.list-records",),
         postchecks=("typed-backup-list",),
-        rollback=RollbackPolicy(supported=False, strategy="La consulta no modifica datos protegidos."),
+        rollback=RollbackPolicy(
+            supported=False, strategy="La consulta no modifica datos protegidos."
+        ),
         emitted_events=(),
         metrics=("backup.list.count",),
         audit=AuditPolicy(record_inputs=False, record_outputs=False, event_names=()),

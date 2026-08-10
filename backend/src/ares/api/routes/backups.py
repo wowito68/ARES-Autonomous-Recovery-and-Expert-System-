@@ -172,7 +172,6 @@ def _problem(exc: BackupServiceError) -> AresProblem:
         code=code,
         title=title,
         detail=(
-            "ARES rejected the backup operation because a safety precondition "
-            "was not satisfied."
+            "ARES rejected the backup operation because a safety precondition was not satisfied."
         ),
     )

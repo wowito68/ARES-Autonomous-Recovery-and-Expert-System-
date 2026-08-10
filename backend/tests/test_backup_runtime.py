@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 from datetime import UTC, datetime
@@ -153,9 +152,7 @@ async def test_consent_authority_requires_exact_phrase_and_independent_uids(
         },
         42,
     )
-    waited = await authority.dispatch(
-        {"action": "wait", "challenge_id": challenge_id}, 41
-    )
+    waited = await authority.dispatch({"action": "wait", "challenge_id": challenge_id}, 41)
     assert approved["decision"] == "approved"
     assert waited["decision"] == "approved"
     assert {record["event_type"] for record in audit.records} >= {
@@ -252,9 +249,7 @@ class _ApprovedConsent:
         del plan, session_id
         return {"challenge_id": self.challenge_id}
 
-    async def wait(
-        self, challenge_id: str, timeout_seconds: float = 600.0
-    ) -> dict[str, Any]:
+    async def wait(self, challenge_id: str, timeout_seconds: float = 600.0) -> dict[str, Any]:
         del timeout_seconds
         assert challenge_id == self.challenge_id
         return {"decision": "approved"}
