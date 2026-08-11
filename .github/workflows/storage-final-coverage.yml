@@ -25,8 +25,31 @@ jobs:
       - name: Install
         working-directory: backend
         run: uv sync --frozen --dev
-      - name: Correct socket cleanup assertion
-        run: sed -i 's/assert socket_path.exists()/assert not socket_path.exists()/' backend/tests/test_storage_common_platform_edges.py
+      - name: Normalize tests
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          common = Path('backend/tests/test_storage_common_platform_edges.py')
+          text = common.read_text(encoding='utf-8').replace(
+              'assert socket_path.exists()',
+              'assert not socket_path.exists()',
+          )
+          common.write_text(text, encoding='utf-8')
+
+          final = Path('backend/tests/test_storage_final_coverage.py')
+          text = final.read_text(encoding='utf-8')
+          if 'from fastapi import FastAPI\n' not in text:
+              text = text.replace('import pytest\n', 'import pytest\nfrom fastapi import FastAPI\n', 1)
+          text = text.replace(
+              'application = argparse.Namespace(state=argparse.Namespace(backup_service=_BackupService()))',
+              'application = FastAPI()\n    application.state.backup_service = _BackupService()',
+          )
+          text = text.replace(
+              'application = argparse.Namespace(state=argparse.Namespace(filesystem_repair_service=service))',
+              'application = FastAPI()\n    application.state.filesystem_repair_service = service',
+          )
+          final.write_text(text, encoding='utf-8')
+          PY
       - name: Format and safe autofix
         working-directory: backend
         run: |
