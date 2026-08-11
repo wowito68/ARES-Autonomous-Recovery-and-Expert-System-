@@ -3,7 +3,6 @@ from pathlib import Path
 
 common = Path("backend/tests/test_storage_common_platform_edges.py")
 text = common.read_text(encoding="utf-8")
-text = text.replace("assert not socket_path.exists()", "assert socket_path.exists()")
 old = '''        assert (
             await cli._storage_command(parser.parse_args(["storage", "execute", operation_id]), app)
             == 0
