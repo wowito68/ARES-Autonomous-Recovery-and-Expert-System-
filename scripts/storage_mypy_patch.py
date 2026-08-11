@@ -5,6 +5,8 @@ def replace(path: str, old: str, new: str, *, count: int = -1) -> None:
     file = Path(path)
     text = file.read_text(encoding="utf-8")
     if old not in text:
+        if new in text:
+            return
         raise SystemExit(f"expected block not found: {path}: {old[:80]!r}")
     file.write_text(text.replace(old, new, count), encoding="utf-8")
 
@@ -76,19 +78,13 @@ replace(
 )
 replace(
     "backend/src/ares/runtime/broker.py",
-    "async def _unix_server(handler, socket_path: Path) -> asyncio.AbstractServer:\n",
-    "async def _unix_server(handler: BrokerSend | UnixHandler, socket_path: Path) -> asyncio.AbstractServer:\n",
-)
-# BrokerSend is single-message; server handler is reader/writer.
-replace(
-    "backend/src/ares/runtime/broker.py",
     "BrokerSend = Callable[[dict[str, Any]], Awaitable[None]]\n",
     "BrokerSend = Callable[[dict[str, Any]], Awaitable[None]]\n"
     "UnixHandler = Callable[[asyncio.StreamReader, asyncio.StreamWriter], Awaitable[None]]\n",
 )
 replace(
     "backend/src/ares/runtime/broker.py",
-    "async def _unix_server(handler: BrokerSend | UnixHandler, socket_path: Path) -> asyncio.AbstractServer:\n",
+    "async def _unix_server(handler, socket_path: Path) -> asyncio.AbstractServer:\n",
     "async def _unix_server(handler: UnixHandler, socket_path: Path) -> asyncio.AbstractServer:\n",
 )
 
@@ -250,7 +246,6 @@ replace(
     "async def _filesystem_command(args: argparse.Namespace, application) -> int:\n",
     "async def _filesystem_command(args: argparse.Namespace, application: FastAPI) -> int:\n",
 )
-# Unique names in storage branches to avoid unioning unrelated result types.
 replace(
     "backend/src/ares/cli.py",
     "            result = await service.analyze(session_id=f\"cli-{uuid4().hex}\")\n",
@@ -261,7 +256,6 @@ replace(
     "        print(result.model_dump_json(indent=2))\n        return 0\n    if args.storage_command == \"snapshot\":\n",
     "        print(analysis_result.model_dump_json(indent=2))\n        return 0\n    if args.storage_command == \"snapshot\":\n",
 )
-# The partition subcommands use `result` repeatedly; rename by context.
 replace(
     "backend/src/ares/cli.py",
     "            result = await operations.inspect(args.target, session_id=session_id)\n            print(result.model_dump_json(indent=2))\n",
@@ -313,9 +307,10 @@ replace(
     "    async def on_entry(value) -> None:\n",
     "    async def on_entry(value: BackupEntry) -> None:\n",
 )
-# All one-argument noops in this file are intentionally unconstrained callbacks.
 file = Path("backend/tests/test_backup_tools.py")
-text = file.read_text(encoding="utf-8").replace("    async def noop(_) -> None:\n", "    async def noop(_: object) -> None:\n")
+text = file.read_text(encoding="utf-8").replace(
+    "    async def noop(_) -> None:\n", "    async def noop(_: object) -> None:\n"
+)
 file.write_text(text, encoding="utf-8")
 
 replace(
@@ -345,7 +340,6 @@ replace(
     "            payload = response.json()\n",
     "            payload = cast(dict[str, object], response.json())\n",
 )
-# Remove casts mypy correctly identifies as redundant.
 for path in (
     "backend/tests/test_filesystem_failures.py",
     "backend/tests/test_filesystem_cancellation.py",
@@ -353,6 +347,5 @@ for path in (
     file = Path(path)
     text = file.read_text(encoding="utf-8")
     text = text.replace("cast(FilesystemRepairService, ", "")
-    # only the cast call's final parenthesis on object.__new__ line becomes extra; handle known pattern.
     text = text.replace("object.__new__(FilesystemRepairService))", "object.__new__(FilesystemRepairService)")
     file.write_text(text, encoding="utf-8")
