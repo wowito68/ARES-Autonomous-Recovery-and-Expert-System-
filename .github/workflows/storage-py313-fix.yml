@@ -1,0 +1,46 @@
+name: Storage Python 3.13 Validator
+
+on:
+  push:
+    branches: [agent/storage-partition-management]
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    if: "!contains(github.event.head_commit.message, '[storage-py313-validated]')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/storage-partition-management
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.11.14"
+          python-version: "3.13"
+          working-directory: backend
+      - name: Install
+        working-directory: backend
+        run: uv sync --frozen --dev
+      - name: Apply test fixes
+        run: python3 scripts/storage_py313_test_fix.py
+      - name: Format
+        working-directory: backend
+        run: uv run --frozen ruff format tests/test_storage_common_platform_edges.py tests/test_storage_operation_api.py
+      - name: Lint
+        working-directory: backend
+        run: uv run --frozen ruff check src tests
+      - name: Test full suite with coverage gate
+        working-directory: backend
+        run: uv run --frozen pytest --cov-report=term-missing
+      - name: Commit validated tests
+        run: |
+          git config user.name 'ARES test validator'
+          git config user.email 'ares-test-validator@users.noreply.github.com'
+          git add backend/tests/test_storage_common_platform_edges.py backend/tests/test_storage_operation_api.py
+          git diff --cached --check
+          git commit -m 'Stabilize storage tests on Python 3.13 [storage-py313-validated]'
+          git push origin HEAD:agent/storage-partition-management
