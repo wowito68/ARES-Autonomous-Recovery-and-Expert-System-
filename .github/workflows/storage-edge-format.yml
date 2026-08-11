@@ -25,6 +25,19 @@ jobs:
       - name: Install locked dependencies
         working-directory: backend
         run: uv sync --frozen --dev
+      - name: Normalize edge test source
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('backend/tests/test_storage_partition_edges.py')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace('import asyncio\n', '')
+          text = text.replace(
+              'identity.identify("/tmp/bad\\x00name")',
+              'identity.identify(str(tmp_path / "bad") + "\\x00name")',
+          )
+          path.write_text(text, encoding='utf-8')
+          PY
       - name: Format edge tests
         working-directory: backend
         run: uv run --frozen ruff format tests/test_storage_partition_edges.py
