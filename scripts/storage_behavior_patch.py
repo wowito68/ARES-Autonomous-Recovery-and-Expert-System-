@@ -39,7 +39,7 @@ real = Path("backend/tests/test_filesystem_real_image.py")
 text = real.read_text(encoding="utf-8")
 text = text.replace(
     '("debugfs", "-w", "-R", "set_super_value free_blocks_count 1", str(image)),',
-    '("debugfs", "-w", "-R", "set_super_value free_blocks_count 0", str(image)),',
+    '("debugfs", "-w", "-R", "freei <11>", str(image)),',
 )
 marker = "        stderr=subprocess.DEVNULL,\n    )\n\n    async def scenario() -> None:\n"
 probe = (
