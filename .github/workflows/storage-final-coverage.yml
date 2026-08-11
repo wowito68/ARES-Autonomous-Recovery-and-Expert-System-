@@ -29,11 +29,34 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+
           common = Path('backend/tests/test_storage_common_platform_edges.py')
-          text = common.read_text(encoding='utf-8').replace(
-              'assert socket_path.exists()',
-              'assert not socket_path.exists()',
+          text = common.read_text(encoding='utf-8')
+          text = text.replace('assert not socket_path.exists()', 'assert socket_path.exists()')
+          old = '''        assert (
+              await cli._storage_command(parser.parse_args(["storage", "execute", operation_id]), app)
+              == 0
           )
+          await _poll_storage(
+              app,
+              operation_id,
+              {StorageTransactionStatus.COMMITTED, StorageTransactionStatus.FAILED},
+          )
+          record = await app.state.storage_operation_store.get_record(operation_id)
+          assert (
+              record is not None and record.transaction.status is StorageTransactionStatus.COMMITTED
+          )
+
+          assert (
+'''
+          new = '''        record = await app.state.storage_operation_store.get_record(operation_id)
+          assert record is not None
+
+          assert (
+'''
+          if old not in text:
+              raise SystemExit('storage execute lifecycle block not found')
+          text = text.replace(old, new, 1)
           common.write_text(text, encoding='utf-8')
 
           final = Path('backend/tests/test_storage_final_coverage.py')
