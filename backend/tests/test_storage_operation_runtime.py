@@ -47,9 +47,7 @@ class _Consent:
         self.requested += 1
         return {"challenge_id": "challenge-storage-1234"}
 
-    async def wait(
-        self, challenge_id: str, timeout_seconds: float = 600.0
-    ) -> dict[str, Any]:
+    async def wait(self, challenge_id: str, timeout_seconds: float = 600.0) -> dict[str, Any]:
         del challenge_id, timeout_seconds
         self.waited += 1
         return {"decision": self.decision, "operator_uid": 1000}
@@ -175,9 +173,7 @@ async def test_storage_broker_full_lifecycle_and_one_use_grant(tmp_path: Path) -
     )
     assert verified.partition_table.type is PartitionTableType.GPT
     assert len(verified.partition_table.partitions) == 1
-    assert any(
-        item["event_type"] == "storage.verification.completed" for item in audit.records
-    )
+    assert any(item["event_type"] == "storage.verification.completed" for item in audit.records)
 
     with pytest.raises(PartitionToolError, match="STORAGE_AUTHORIZATION_INVALID"):
         await broker.dispatch(
@@ -356,9 +352,7 @@ async def test_unix_storage_executor_protocol_and_fail_closed_errors(tmp_path: P
     socket_path = tmp_path / "broker.sock"
     seen: list[str] = []
 
-    async def handler(
-        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ) -> None:
+    async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         request = json.loads(await reader.readline())
         action = cast(str, request["action"])
         seen.append(action)
@@ -403,8 +397,7 @@ async def test_unix_storage_executor_protocol_and_fail_closed_errors(tmp_path: P
             payload = validated.proposed_layout.model_dump(mode="json")
         else:
             writer.write(
-                json.dumps({"type": "error", "code": "STORAGE_BROKER_FAILED"}).encode()
-                + b"\n"
+                json.dumps({"type": "error", "code": "STORAGE_BROKER_FAILED"}).encode() + b"\n"
             )
             await writer.drain()
             writer.close()
@@ -424,9 +417,7 @@ async def test_unix_storage_executor_protocol_and_fail_closed_errors(tmp_path: P
         async def on_challenge(value: str) -> None:
             challenges.append(value)
 
-        returned_grant = await executor.request_authorization(
-            validated, on_challenge=on_challenge
-        )
+        returned_grant = await executor.request_authorization(validated, on_challenge=on_challenge)
         assert returned_grant == grant
         stages: list[str] = []
 
@@ -475,9 +466,7 @@ async def test_local_executor_denial_and_grant_consumption(tmp_path: Path) -> No
         await denied.request_authorization(validated, on_challenge=lambda _: asyncio.sleep(0))
 
     executor = LocalTestStorageExecutor(tools)
-    grant = await executor.request_authorization(
-        validated, on_challenge=lambda _: asyncio.sleep(0)
-    )
+    grant = await executor.request_authorization(validated, on_challenge=lambda _: asyncio.sleep(0))
 
     async def stage(name: str, payload: dict[str, object]) -> None:
         del name, payload
