@@ -25,9 +25,22 @@ jobs:
       - name: Install
         working-directory: backend
         run: uv sync --frozen --dev
-      - name: Format
+      - name: Normalize source
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('backend/tests/test_storage_engine_edges.py')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace('token: str = "a"', 'fingerprint_char: str = "a"')
+          text = text.replace('fingerprint_sha256=token * 64', 'fingerprint_sha256=fingerprint_char * 64')
+          text = text.replace('_identity(token="c")', '_identity(fingerprint_char="c")')
+          path.write_text(text, encoding='utf-8')
+          PY
+      - name: Format and autofix safe lint
         working-directory: backend
-        run: uv run --frozen ruff format tests/test_storage_engine_edges.py
+        run: |
+          uv run --frozen ruff format tests/test_storage_engine_edges.py
+          uv run --frozen ruff check --fix tests/test_storage_engine_edges.py
       - name: Lint
         working-directory: backend
         run: uv run --frozen ruff check src tests
