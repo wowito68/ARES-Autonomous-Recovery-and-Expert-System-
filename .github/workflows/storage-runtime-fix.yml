@@ -27,13 +27,22 @@ jobs:
         run: uv sync --frozen --dev
       - name: Apply runtime fix
         run: python3 scripts/storage_runtime_fix.py
-      - name: Validate runtime fix
+      - name: Format runtime fix
         working-directory: backend
-        run: |
-          uv run --frozen ruff format src tests
-          uv run --frozen ruff check src tests
-          uv run --frozen mypy
-          uv run --frozen pytest -q --no-cov tests/test_storage_operation_api.py tests/test_storage_operation_core.py tests/test_storage_partition_real_image.py
+        run: uv run --frozen ruff format src tests
+      - name: Lint runtime fix
+        working-directory: backend
+        run: uv run --frozen ruff check src tests
+      - name: Type-check runtime fix
+        working-directory: backend
+        run: uv run --frozen mypy
+      - name: Test runtime fix
+        working-directory: backend
+        run: >-
+          uv run --frozen pytest -q --no-cov
+          tests/test_storage_operation_api.py
+          tests/test_storage_operation_core.py
+          tests/test_storage_partition_real_image.py
       - name: Commit validated code-only runtime fix
         run: |
           git config user.name 'ARES runtime fixer'
