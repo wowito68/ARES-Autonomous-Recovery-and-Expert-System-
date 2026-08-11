@@ -34,6 +34,25 @@ jobs:
           text = text.replace('token: str = "a"', 'fingerprint_char: str = "a"')
           text = text.replace('fingerprint_sha256=token * 64', 'fingerprint_sha256=fingerprint_char * 64')
           text = text.replace('_identity(token="c")', '_identity(fingerprint_char="c")')
+          text = text.replace('model="fixture",', 'model=f"fixture-{fingerprint_char}",', 1)
+          old = '''    with pytest.raises(StorageOperationEngineError, match="STORAGE_AUTHORIZATION_GRANT_UNAVAILABLE"):
+        await engine2.execute_authorized(
+            plan2.operation_id,
+            session_id=plan2.session_id,
+            on_stage=lambda _name, _payload: asyncio.sleep(0),
+        )
+'''
+          new = '''    engine3, _, _, plan3 = await _validated_create(tmp_path / "missing-grant")
+    with pytest.raises(StorageOperationEngineError, match="STORAGE_AUTHORIZATION_GRANT_UNAVAILABLE"):
+        await engine3.execute_authorized(
+            plan3.operation_id,
+            session_id=plan3.session_id,
+            on_stage=lambda _name, _payload: asyncio.sleep(0),
+        )
+'''
+          if old not in text:
+              raise SystemExit('missing grant assertion block not found')
+          text = text.replace(old, new, 1)
           path.write_text(text, encoding='utf-8')
           PY
       - name: Format and autofix safe lint
