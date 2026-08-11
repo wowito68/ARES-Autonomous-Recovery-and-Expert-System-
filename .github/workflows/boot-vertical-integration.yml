@@ -1,0 +1,49 @@
+name: Boot Vertical Integration Validator
+
+on:
+  push:
+    branches: [agent/boot-recovery-management]
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    if: "!contains(github.event.head_commit.message, '[boot-vertical-integrated]')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/boot-recovery-management
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.11.14"
+          python-version: "3.12"
+          working-directory: backend
+      - name: Install
+        working-directory: backend
+        run: uv sync --frozen --dev
+      - name: Apply vertical integration
+        run: python3 scripts/boot_vertical_integration.py
+      - name: Format
+        working-directory: backend
+        run: uv run --frozen ruff format src
+      - name: Lint
+        working-directory: backend
+        run: uv run --frozen ruff check src
+      - name: Type check
+        working-directory: backend
+        run: uv run --frozen mypy
+      - name: Import smoke
+        working-directory: backend
+        run: uv run --frozen python -c 'from ares.main import create_app; from ares.boot import BootRecoveryEngine; print("boot-import-ok")'
+      - name: Commit code-only integration
+        run: |
+          git config user.name 'ARES boot integrator'
+          git config user.email 'ares-boot-integrator@users.noreply.github.com'
+          git add backend/src
+          git diff --cached --check
+          git commit -m 'Integrate Boot Recovery vertical slice [boot-vertical-integrated]'
+          git push origin HEAD:agent/boot-recovery-management
