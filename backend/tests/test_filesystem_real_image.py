@@ -32,11 +32,18 @@ def test_real_ext4_image_is_detected_repaired_and_verified(tmp_path: Path) -> No
     subprocess.run(("truncate", "-s", "32M", str(image)), check=True)  # noqa: S603, S607
     subprocess.run(("mkfs.ext4", "-F", "-q", str(image)), check=True)  # noqa: S603, S607
     subprocess.run(  # noqa: S603
-        ("debugfs", "-w", "-R", "set_super_value free_blocks_count 1", str(image)),  # noqa: S607
+        ("debugfs", "-w", "-R", "freei <11>", str(image)),  # noqa: S607
         check=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    raw_check = subprocess.run(  # noqa: S603
+        ("e2fsck", "-f", "-n", str(image)),  # noqa: S607
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    assert raw_check.returncode != 0, "debugfs fixture did not create an inconsistency"
 
     async def scenario() -> None:
         tools = FilesystemToolSuite(

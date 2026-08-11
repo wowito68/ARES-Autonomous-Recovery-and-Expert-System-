@@ -269,37 +269,18 @@ class VerifyFilesystemRepairAction:
             limitations=outcome.limitations,
             message=message,
         )
-        if verification_status is RepairVerificationStatus.SUCCESS:
-            execution_status = RepairExecutionStatus.COMPLETED
-            error_code = None
-            event_name = "repair.completed"
-            severity = EventSeverity.INFO
-        elif verification_status in {
-            RepairVerificationStatus.PARTIAL,
-            RepairVerificationStatus.UNKNOWN,
-        }:
-            execution_status = RepairExecutionStatus.PARTIAL
-            error_code = "FILESYSTEM_REPAIR_PARTIAL"
-            event_name = "repair.failed"
-            severity = EventSeverity.WARNING
-        else:
-            execution_status = RepairExecutionStatus.FAILED
-            error_code = "FILESYSTEM_VERIFICATION_FAILED"
-            event_name = "repair.failed"
-            severity = EventSeverity.ERROR
         execution = record.execution.model_copy(
             update={
-                "status": execution_status,
-                "finished_at": datetime.now(UTC),
+                "status": RepairExecutionStatus.VERIFYING,
                 "tool": outcome.repair_tool,
-                "error_code": error_code,
+                "error_code": None,
             }
         )
         record = record.model_copy(update={"execution": execution, "verification": verification})
         await self.store.put_repair(record)
         await _event(
             context,
-            event_name,
+            "repair.verification.completed",
             {
                 "repair_id": plan.repair_id,
                 "verification_id": verification.id,
@@ -308,7 +289,6 @@ class VerifyFilesystemRepairAction:
                 "after": outcome.after.health.value,
                 "remounted": outcome.remounted,
             },
-            severity,
             session_id=request.session_id,
         )
         return {
@@ -323,6 +303,9 @@ class VerifyFilesystemRepairAction:
 class ProjectFilesystemRepairGraphAction:
     id = "knowledge.project-filesystem-repair"
     idempotent = True
+
+    def __init__(self, store: FilesystemRepairStore) -> None:
+        self.store = store
 
     async def run(self, inputs: dict[str, Any], context: ActionContext) -> dict[str, Any]:
         record = FilesystemRepairRecord.model_validate(inputs["repair"])
@@ -397,16 +380,54 @@ class ProjectFilesystemRepairGraphAction:
             )
             edges.append(GraphEdge(source=repair_id, relation="protected_by", target=checkpoint_id))
         snapshot = await context.graph.apply(tuple(nodes), tuple(edges))
-        result = FilesystemRepairResult(
-            repair=record,
-            verification=verification,
-            knowledge_graph_revision=snapshot.revision,
+        if verification.status is RepairVerificationStatus.SUCCESS:
+            terminal_status = RepairExecutionStatus.COMPLETED
+            error_code = None
+            event_name = "repair.completed"
+            severity = EventSeverity.INFO
+        elif verification.status in {
+            RepairVerificationStatus.PARTIAL,
+            RepairVerificationStatus.UNKNOWN,
+        }:
+            terminal_status = RepairExecutionStatus.PARTIAL
+            error_code = "FILESYSTEM_REPAIR_PARTIAL"
+            event_name = "repair.failed"
+            severity = EventSeverity.WARNING
+        else:
+            terminal_status = RepairExecutionStatus.FAILED
+            error_code = "FILESYSTEM_VERIFICATION_FAILED"
+            event_name = "repair.failed"
+            severity = EventSeverity.ERROR
+        execution = record.execution.model_copy(
+            update={
+                "status": terminal_status,
+                "finished_at": datetime.now(UTC),
+                "error_code": error_code,
+            }
         )
+        record = record.model_copy(update={"execution": execution})
+        await self.store.put_repair(record)
         await _event(
             context,
             "knowledge.graph.updated",
             {"repair_id": record.id, "revision": snapshot.revision},
             session_id=record.execution.session_id,
+        )
+        await _event(
+            context,
+            event_name,
+            {
+                "repair_id": record.id,
+                "verification_id": verification.id,
+                "verification_status": verification.status.value,
+            },
+            severity,
+            session_id=record.execution.session_id,
+        )
+        result = FilesystemRepairResult(
+            repair=record,
+            verification=verification,
+            knowledge_graph_revision=snapshot.revision,
         )
         return result.model_dump(mode="json")
 

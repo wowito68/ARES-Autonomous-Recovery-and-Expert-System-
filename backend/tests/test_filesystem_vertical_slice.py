@@ -116,8 +116,10 @@ def test_reasoning_can_select_repair_but_cannot_supply_a_device(app: FastAPI) ->
 
     result = engine.assess(ReasoningRequest(goal="Repara mi partición con filesystem dañado"))
 
-    assert result.status is ReasoningStatus.CAPABILITY_SELECTED
-    assert result.selected_capability_id == "filesystem.repair"
+    assert result.status is ReasoningStatus.NEEDS_EVIDENCE
+    assert result.selected_capability_id is None
+    assert result.hypotheses[0].capability_id == "filesystem.repair"
+    assert "verified-protection-checkpoint" in result.requested_evidence
     manager = cast(CapabilityManager, app.state.capability_manager)
     descriptor = manager.descriptor("filesystem.repair")
     assert descriptor is not None
