@@ -1,0 +1,66 @@
+name: Storage Quality Fix
+
+on:
+  push:
+    branches:
+      - agent/storage-partition-management
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: ${{ !contains(github.event.head_commit.message, '[quality-fixed]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Check out exact branch head
+        uses: actions/checkout@v6
+        with:
+          ref: agent/storage-partition-management
+          fetch-depth: 0
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.11.14"
+          python-version: "3.12"
+          working-directory: backend
+
+      - name: Install locked dependencies
+        run: uv sync --frozen --dev
+
+      - name: Apply mechanical quality fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('tests/test_backup_tools.py')
+          text = path.read_text(encoding='utf-8')
+          path.write_text(text.replace('\u2013', '-'), encoding='utf-8')
+          PY
+          uv run --frozen ruff check --fix --unsafe-fixes src tests
+          uv run --frozen ruff format src tests
+          uv run --frozen ruff check src tests
+          uv run --frozen ruff format --check src tests
+
+      - name: Commit code-only quality fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd ..
+          git restore --source=HEAD -- .github/workflows/backend-ci.yml .github/workflows/storage-quality-fix.yml
+          git config user.name 'ARES quality fixer'
+          git config user.email 'ares-quality-fixer@users.noreply.github.com'
+          git add backend
+          git diff --cached --check
+          if git diff --cached --name-only | grep -q '^\.github/workflows/'; then
+            echo 'Refusing workflow mutation from quality token' >&2
+            exit 1
+          fi
+          git commit -m 'Fix Ruff violations across storage increment [quality-fixed]'
+          git push origin HEAD:agent/storage-partition-management
