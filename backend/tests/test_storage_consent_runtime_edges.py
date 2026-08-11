@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -152,7 +151,9 @@ async def test_storage_consent_denial_expiration_and_audit_failure(tmp_path: Pat
         )
 
 
-async def test_unix_consent_clients_cover_storage_wait_and_operator_protocol(tmp_path: Path) -> None:
+async def test_unix_consent_clients_cover_storage_wait_and_operator_protocol(
+    tmp_path: Path,
+) -> None:
     socket_path = tmp_path / "consent.sock"
     actions: list[str] = []
 
@@ -204,7 +205,9 @@ async def test_unix_consent_clients_cover_storage_wait_and_operator_protocol(tmp
     assert actions == ["storage.create", "wait", "get", "approve", "deny"]
 
 
-async def test_consent_request_rejects_socket_error_bad_response_error_and_payload(tmp_path: Path) -> None:
+async def test_consent_request_rejects_socket_error_bad_response_error_and_payload(
+    tmp_path: Path,
+) -> None:
     with pytest.raises(RuntimeError, match="consent agent unavailable"):
         await _request(
             tmp_path / "missing.sock",
@@ -272,4 +275,3 @@ async def test_runtime_socket_helpers_and_safe_error_mappings(tmp_path: Path) ->
     assert broker_safe_code(StorageExecutorError("not directly broker-coded")) == "BROKER_FAILED"
     assert len(broker_token("sensitive-relative-path")) == 24
     assert broker_token("same") == broker_token("same")
-    assert os.path.isdir(tmp_path)
