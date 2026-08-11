@@ -29,6 +29,7 @@ jobs:
         run: |
           python3 scripts/storage_mypy_bootstrap.py
           python3 scripts/storage_mypy_patch.py
+          python3 scripts/storage_mypy_bootstrap.py
       - name: Validate strict quality
         working-directory: backend
         run: |
