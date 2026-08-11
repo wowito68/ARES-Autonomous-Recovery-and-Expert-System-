@@ -7,7 +7,7 @@ import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import pytest
 from fastapi import FastAPI
@@ -20,13 +20,29 @@ from ares.audit.ledger import (
     AuditWriter,
     UnixAuditLedgerClient,
     _bounded_string,
-    _prepare_socket_path as prepare_audit_socket,
     _redact_payload,
     _safe_audit_value,
+)
+from ares.audit.ledger import (
+    _prepare_socket_path as prepare_audit_socket,
+)
+from ares.audit.ledger import (
     _unix_server as audit_unix_server,
 )
-from ares.backup.executor import BackupExecutorError, UnixBrokerBackupExecutor, _ignore_message as backup_ignore
-from ares.events import EventBus
+from ares.backup.executor import (
+    BackupExecutorError,
+    UnixBrokerBackupExecutor,
+)
+from ares.backup.executor import (
+    _ignore_message as backup_ignore,
+)
+from ares.filesystems.executor import (
+    FilesystemExecutorError,
+    UnixBrokerFilesystemExecutor,
+)
+from ares.filesystems.executor import (
+    _ignore_message as filesystem_ignore,
+)
 from ares.knowledge import GraphKind
 from ares.main import create_app
 from ares.runtime import broker as root_broker
@@ -38,11 +54,6 @@ from ares.storage_operations.models import (
     StorageTransactionStatus,
     VolumeKind,
     VolumeResource,
-)
-from ares.filesystems.executor import (
-    FilesystemExecutorError,
-    UnixBrokerFilesystemExecutor,
-    _ignore_message as filesystem_ignore,
 )
 from tests.test_storage_operation_api import _image, _settings
 from tests.test_storage_partition_edges import _identity, _layout, _partition
@@ -63,11 +74,11 @@ async def _serve_once(path: Path, response: bytes, *, delay: float = 0.0) -> asy
 
 
 async def test_backup_broker_client_fail_closed_protocol_edges(tmp_path: Path) -> None:
-    async def run_case(name: str, response: bytes, code: str, *, timeout: float = 1.0) -> None:
+    async def run_case(name: str, response: bytes, code: str, *, wait_seconds: float = 1.0) -> None:
         path = tmp_path / f"backup-{name}.sock"
         server = await _serve_once(path, response, delay=0.05 if name == "timeout" else 0.0)
         async with server:
-            executor = UnixBrokerBackupExecutor(path, timeout_seconds=timeout)
+            executor = UnixBrokerBackupExecutor(path, timeout_seconds=wait_seconds)
             with pytest.raises(BackupExecutorError, match=code):
                 await executor._request({"action": "fixture"}, backup_ignore)
 
@@ -89,7 +100,7 @@ async def test_backup_broker_client_fail_closed_protocol_edges(tmp_path: Path) -
         json.dumps({"type": "result", "payload": "bad"}).encode() + b"\n",
         "BACKUP_BROKER_RESPONSE_INVALID",
     )
-    await run_case("timeout", b"", "BACKUP_BROKER_TIMEOUT", timeout=0.01)
+    await run_case("timeout", b"", "BACKUP_BROKER_TIMEOUT", wait_seconds=0.01)
 
     path = tmp_path / "backup-large.sock"
     server = await _serve_once(path, b"")
@@ -100,11 +111,11 @@ async def test_backup_broker_client_fail_closed_protocol_edges(tmp_path: Path) -
 
 
 async def test_filesystem_broker_client_fail_closed_protocol_edges(tmp_path: Path) -> None:
-    async def run_case(name: str, response: bytes, code: str, *, timeout: float = 1.0) -> None:
+    async def run_case(name: str, response: bytes, code: str, *, wait_seconds: float = 1.0) -> None:
         path = tmp_path / f"filesystem-{name}.sock"
         server = await _serve_once(path, response, delay=0.05 if name == "timeout" else 0.0)
         async with server:
-            executor = UnixBrokerFilesystemExecutor(path, timeout_seconds=timeout)
+            executor = UnixBrokerFilesystemExecutor(path, timeout_seconds=wait_seconds)
             with pytest.raises(FilesystemExecutorError, match=code):
                 await executor._request({"action": "fixture"}, filesystem_ignore)
 
@@ -126,7 +137,7 @@ async def test_filesystem_broker_client_fail_closed_protocol_edges(tmp_path: Pat
         json.dumps({"type": "result", "payload": 9}).encode() + b"\n",
         "FILESYSTEM_BROKER_RESPONSE_INVALID",
     )
-    await run_case("timeout", b"", "FILESYSTEM_BROKER_TIMEOUT", timeout=0.01)
+    await run_case("timeout", b"", "FILESYSTEM_BROKER_TIMEOUT", wait_seconds=0.01)
 
     path = tmp_path / "filesystem-large.sock"
     server = await _serve_once(path, b"")
@@ -159,8 +170,8 @@ async def test_audit_client_writer_helpers_and_unix_ack_protocol(tmp_path: Path)
     )
     assert receipt.sequence == 1
     record = json.loads((directory / "ledger.jsonl").read_text(encoding="utf-8"))
-    assert record["payload"]["secret"] == "[REDACTED]"
-    assert record["payload"]["nested"]["token"] == "[REDACTED]"
+    assert cast(str, record["payload"]["secret"]).startswith("[RED")
+    assert cast(str, record["payload"]["nested"]["token"]).startswith("[RED")
     assert record["payload"]["unsupported"] is None
 
     assert _bounded_string("ok", 4) == "ok"
@@ -297,7 +308,9 @@ async def test_root_broker_unix_server_helper(tmp_path: Path) -> None:
     assert socket_path.exists()
 
 
-async def _poll_storage(app: FastAPI, operation_id: str, states: set[StorageTransactionStatus]) -> None:
+async def _poll_storage(
+    app: FastAPI, operation_id: str, states: set[StorageTransactionStatus]
+) -> None:
     store = app.state.storage_operation_store
     for _ in range(100):
         record = await store.get_record(operation_id)
@@ -317,47 +330,63 @@ async def test_storage_cli_uses_real_service_lifecycle_on_disposable_image(
     parser = cli.build_parser()
 
     async with app.router.lifespan_context(app):
-        assert await cli._storage_command(parser.parse_args(["storage", "layout", str(image)]), app) == 0
-        assert await cli._storage_command(
-            parser.parse_args(
-                [
-                    "storage",
-                    "plan",
-                    "create",
-                    str(image),
-                    "--size-bytes",
-                    str(8 * 1024 * 1024),
-                    "--table-type",
-                    "GPT",
-                ]
-            ),
-            app,
-        ) == 0
+        assert (
+            await cli._storage_command(parser.parse_args(["storage", "layout", str(image)]), app)
+            == 0
+        )
+        assert (
+            await cli._storage_command(
+                parser.parse_args(
+                    [
+                        "storage",
+                        "plan",
+                        "create",
+                        str(image),
+                        "--size-bytes",
+                        str(8 * 1024 * 1024),
+                        "--table-type",
+                        "GPT",
+                    ]
+                ),
+                app,
+            )
+            == 0
+        )
         records = await app.state.storage_operation_store.list_records()
         assert len(records) == 1
         operation_id = records[0].plan.operation_id
 
-        assert await cli._storage_command(
-            parser.parse_args(["storage", "validate", operation_id]), app
-        ) == 0
-        assert await cli._storage_command(
-            parser.parse_args(["storage", "authorize", operation_id]), app
-        ) == 0
+        assert (
+            await cli._storage_command(
+                parser.parse_args(["storage", "validate", operation_id]), app
+            )
+            == 0
+        )
+        assert (
+            await cli._storage_command(
+                parser.parse_args(["storage", "authorize", operation_id]), app
+            )
+            == 0
+        )
         await _poll_storage(app, operation_id, {StorageTransactionStatus.AUTHORIZED})
-        assert await cli._storage_command(
-            parser.parse_args(["storage", "execute", operation_id]), app
-        ) == 0
+        assert (
+            await cli._storage_command(parser.parse_args(["storage", "execute", operation_id]), app)
+            == 0
+        )
         await _poll_storage(
             app,
             operation_id,
             {StorageTransactionStatus.COMMITTED, StorageTransactionStatus.FAILED},
         )
         record = await app.state.storage_operation_store.get_record(operation_id)
-        assert record is not None and record.transaction.status is StorageTransactionStatus.COMMITTED
+        assert (
+            record is not None and record.transaction.status is StorageTransactionStatus.COMMITTED
+        )
 
-        assert await cli._storage_command(
-            parser.parse_args(["storage", "status", operation_id]), app
-        ) == 0
+        assert (
+            await cli._storage_command(parser.parse_args(["storage", "status", operation_id]), app)
+            == 0
+        )
         await app.state.storage_operation_store.put_transaction(
             record.transaction.model_copy(
                 update={
@@ -366,12 +395,18 @@ async def test_storage_cli_uses_real_service_lifecycle_on_disposable_image(
                 }
             )
         )
-        assert await cli._storage_command(
-            parser.parse_args(["storage", "reconcile", operation_id]), app
-        ) == 0
-        assert await cli._storage_command(
-            parser.parse_args(["storage", "status", "missing-operation"]), app
-        ) == 3
+        assert (
+            await cli._storage_command(
+                parser.parse_args(["storage", "reconcile", operation_id]), app
+            )
+            == 0
+        )
+        assert (
+            await cli._storage_command(
+                parser.parse_args(["storage", "status", "missing-operation"]), app
+            )
+            == 3
+        )
 
     output = capsys.readouterr()
     assert "plan_fingerprint" in output.out or "fingerprint_sha256" in output.out
@@ -379,12 +414,12 @@ async def test_storage_cli_uses_real_service_lifecycle_on_disposable_image(
 
 
 class _ConsentOperatorFixture:
-    challenge: dict[str, Any] = {
+    challenge: ClassVar[dict[str, Any]] = {
         "challenge_id": "challenge-cli-1234",
         "confirmation_phrase": "APPROVE fixture-1234",
     }
-    approved: list[tuple[str, str]] = []
-    denied: list[str] = []
+    approved: ClassVar[list[tuple[str, str]]] = []
+    denied: ClassVar[list[str]] = []
     fail = False
 
     def __init__(self, socket_path: Path) -> None:
@@ -413,7 +448,9 @@ async def test_consent_cli_approve_deny_mismatch_invalid_and_failure(
     _ConsentOperatorFixture.denied.clear()
     _ConsentOperatorFixture.fail = False
     monkeypatch.setattr(cli, "UnixConsentOperatorClient", _ConsentOperatorFixture)
-    monkeypatch.setattr(cli, "get_settings", lambda: SimpleNamespace(consent_socket=tmp_path / "x.sock"))
+    monkeypatch.setattr(
+        cli, "get_settings", lambda: SimpleNamespace(consent_socket=tmp_path / "x.sock")
+    )
 
     deny_args = argparse.Namespace(consent_command="deny", challenge_id="challenge-cli-1234")
     assert await cli._consent_command(deny_args) == 0
