@@ -26,7 +26,9 @@ jobs:
         working-directory: backend
         run: uv sync --frozen --dev
       - name: Apply strict typing patch
-        run: python3 scripts/storage_mypy_patch.py
+        run: |
+          python3 scripts/storage_mypy_bootstrap.py
+          python3 scripts/storage_mypy_patch.py
       - name: Validate strict quality
         working-directory: backend
         run: |
