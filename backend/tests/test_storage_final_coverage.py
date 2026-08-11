@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import pytest
+from fastapi import FastAPI
 
 from ares import cli
 from ares.actions.base import ActionContext, ActionError
@@ -303,17 +304,36 @@ async def test_backup_cli_plan_create_cancel_complete_list_verify_and_unknown_co
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    application = argparse.Namespace(state=argparse.Namespace(backup_service=_BackupService()))
+    application = FastAPI()
+    application.state.backup_service = _BackupService()
     parser = cli.build_parser()
 
-    assert await cli._backup_command(parser.parse_args(["backup", "plan", "/src", "/dst"]), application) == 0
+    assert (
+        await cli._backup_command(
+            parser.parse_args(["backup", "plan", "/src", "/dst"]), application
+        )
+        == 0
+    )
     assert await cli._backup_command(parser.parse_args(["backup", "list"]), application) == 0
-    assert await cli._backup_command(parser.parse_args(["backup", "verify", "backup-1"]), application) == 0
+    assert (
+        await cli._backup_command(parser.parse_args(["backup", "verify", "backup-1"]), application)
+        == 0
+    )
 
     monkeypatch.setattr(builtins, "input", lambda _: "NO")
-    assert await cli._backup_command(parser.parse_args(["backup", "create", "/src", "/dst"]), application) == 4
+    assert (
+        await cli._backup_command(
+            parser.parse_args(["backup", "create", "/src", "/dst"]), application
+        )
+        == 4
+    )
     monkeypatch.setattr(builtins, "input", lambda _: "REQUEST")
-    assert await cli._backup_command(parser.parse_args(["backup", "create", "/src", "/dst"]), application) == 0
+    assert (
+        await cli._backup_command(
+            parser.parse_args(["backup", "create", "/src", "/dst"]), application
+        )
+        == 0
+    )
 
     assert await cli._backup_command(argparse.Namespace(backup_command="other"), application) == 1
     output = capsys.readouterr()
@@ -326,59 +346,102 @@ async def test_filesystem_cli_all_routes_and_safety_rejections(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     service = _FilesystemService()
-    application = argparse.Namespace(state=argparse.Namespace(filesystem_repair_service=service))
+    application = FastAPI()
+    application.state.filesystem_repair_service = service
     parser = cli.build_parser()
 
-    assert await cli._filesystem_command(parser.parse_args(["filesystem", "inspect", "/dev/test"]), application) == 0
-    assert await cli._filesystem_command(
-        parser.parse_args(["filesystem", "repair", "plan", "/dev/test"]), application
-    ) == 0
+    assert (
+        await cli._filesystem_command(
+            parser.parse_args(["filesystem", "inspect", "/dev/test"]), application
+        )
+        == 0
+    )
+    assert (
+        await cli._filesystem_command(
+            parser.parse_args(["filesystem", "repair", "plan", "/dev/test"]), application
+        )
+        == 0
+    )
     _FilesystemService.plan_executable = False
-    assert await cli._filesystem_command(
-        parser.parse_args(["filesystem", "repair", "plan", "/dev/test"]), application
-    ) == 3
+    assert (
+        await cli._filesystem_command(
+            parser.parse_args(["filesystem", "repair", "plan", "/dev/test"]), application
+        )
+        == 3
+    )
     _FilesystemService.plan_executable = True
 
-    assert await cli._filesystem_command(
-        parser.parse_args(["filesystem", "repair", "status", "repair-1"]), application
-    ) == 0
-    assert await cli._filesystem_command(
-        parser.parse_args(["filesystem", "repair", "status", "missing"]), application
-    ) == 3
+    assert (
+        await cli._filesystem_command(
+            parser.parse_args(["filesystem", "repair", "status", "repair-1"]), application
+        )
+        == 0
+    )
+    assert (
+        await cli._filesystem_command(
+            parser.parse_args(["filesystem", "repair", "status", "missing"]), application
+        )
+        == 3
+    )
 
     _FilesystemService.missing_plan = True
-    assert await cli._filesystem_command(
-        parser.parse_args(["filesystem", "repair", "missing-plan"]), application
-    ) == 3
+    assert (
+        await cli._filesystem_command(
+            parser.parse_args(["filesystem", "repair", "missing-plan"]), application
+        )
+        == 3
+    )
     _FilesystemService.missing_plan = False
 
     monkeypatch.setattr(builtins, "input", lambda _: "NO")
-    assert await cli._filesystem_command(
-        parser.parse_args(["filesystem", "repair", "repair-plan-1234"]), application
-    ) == 4
+    assert (
+        await cli._filesystem_command(
+            parser.parse_args(["filesystem", "repair", "repair-plan-1234"]), application
+        )
+        == 4
+    )
     monkeypatch.setattr(builtins, "input", lambda _: "REQUEST")
-    assert await cli._filesystem_command(
-        parser.parse_args(["filesystem", "repair", "repair-plan-1234"]), application
-    ) == 0
+    assert (
+        await cli._filesystem_command(
+            parser.parse_args(["filesystem", "repair", "repair-plan-1234"]), application
+        )
+        == 0
+    )
 
-    assert await cli._filesystem_command(
-        argparse.Namespace(filesystem_command="repair", repair_action="plan", value=None, backup_id=None),
-        application,
-    ) == 2
-    assert await cli._filesystem_command(
-        argparse.Namespace(filesystem_command="repair", repair_action="status", value=None, backup_id=None),
-        application,
-    ) == 2
-    assert await cli._filesystem_command(
-        argparse.Namespace(
-            filesystem_command="repair",
-            repair_action="repair-plan-1234",
-            value="extra",
-            backup_id=None,
-        ),
-        application,
-    ) == 2
-    assert await cli._filesystem_command(argparse.Namespace(filesystem_command="other"), application) == 1
+    assert (
+        await cli._filesystem_command(
+            argparse.Namespace(
+                filesystem_command="repair", repair_action="plan", value=None, backup_id=None
+            ),
+            application,
+        )
+        == 2
+    )
+    assert (
+        await cli._filesystem_command(
+            argparse.Namespace(
+                filesystem_command="repair", repair_action="status", value=None, backup_id=None
+            ),
+            application,
+        )
+        == 2
+    )
+    assert (
+        await cli._filesystem_command(
+            argparse.Namespace(
+                filesystem_command="repair",
+                repair_action="repair-plan-1234",
+                value="extra",
+                backup_id=None,
+            ),
+            application,
+        )
+        == 2
+    )
+    assert (
+        await cli._filesystem_command(argparse.Namespace(filesystem_command="other"), application)
+        == 1
+    )
     assert "Independent high-risk authorization required" in capsys.readouterr().err
 
 
