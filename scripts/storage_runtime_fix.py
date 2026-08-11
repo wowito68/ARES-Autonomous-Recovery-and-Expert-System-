@@ -74,6 +74,8 @@ broker.write_text(text, encoding="utf-8")
 
 api_test = Path("backend/tests/test_storage_operation_api.py")
 text = api_test.read_text(encoding="utf-8")
+text = text.replace('"table_type": "gpt"', '"table_type": "GPT"')
+text = text.replace('"table_type": "mbr"', '"table_type": "MBR"')
 old = '''            graph = await client.get("/api/v1/knowledge/graph", headers=headers)
             nodes = cast(list[dict[str, object]], cast(dict[str, object], graph.json())["nodes"])
             kinds = {node["kind"] for node in nodes}
