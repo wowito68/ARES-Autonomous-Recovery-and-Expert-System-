@@ -8,7 +8,11 @@ from uuid import uuid4
 
 import pytest
 
-from ares.protection import ProtectionCheckpoint, ProtectionCheckpointStatus, ProtectionCheckpointStore
+from ares.protection import (
+    ProtectionCheckpoint,
+    ProtectionCheckpointStatus,
+    ProtectionCheckpointStore,
+)
 from ares.storage_operations.engine import (
     DeclarativeStorageOperationRequest,
     StorageOperationEngine,
@@ -26,13 +30,10 @@ from ares.storage_operations.integrity import (
     layout_fingerprint,
 )
 from ares.storage_operations.models import (
-    BootImpactAssessment,
-    BootImpactLevel,
     DataImpactAssessment,
     DataImpactLevel,
     FreeRegion,
     PartitionResource,
-    PartitionRole,
     PartitionTable,
     PartitionTableCheckpointArtifact,
     PartitionTableType,
@@ -44,8 +45,6 @@ from ares.storage_operations.models import (
     StorageLayout,
     StorageOperationOutcome,
     StorageOperationPlan,
-    StorageOperationType,
-    StorageTransaction,
     StorageTransactionStatus,
     StorageVerificationStatus,
 )
@@ -172,19 +171,19 @@ def _identity(
     *,
     kind: Literal["regular_file", "loop", "block"] = "regular_file",
     controlled: bool = True,
-    token: str = "a",
+    fingerprint_char: str = "a",
 ) -> StorageDeviceIdentity:
     draft = StorageDeviceIdentity(
         requested_path=path,
         canonical_path=path,
         device_kind=kind,
         major_minor="file:1:1" if kind == "regular_file" else "8:0",
-        model="fixture",
+        model=f"fixture-{fingerprint_char}",
         size_bytes=64 * 1024 * 1024,
         logical_sector_size=512,
         physical_sector_size=512,
         controlled_test_target=controlled,
-        fingerprint_sha256=token * 64,
+        fingerprint_sha256=fingerprint_char * 64,
     )
     return draft.model_copy(update={"fingerprint_sha256": device_identity_fingerprint(draft)})
 
@@ -330,7 +329,9 @@ async def test_plan_rejects_table_mismatch_missing_partition_free_region_and_spa
 
     tiny = _layout(
         free_regions=(
-            FreeRegion(start_sector=2048, end_sector=4095, size_sectors=2048, size_bytes=1024 * 1024),
+            FreeRegion(
+                start_sector=2048, end_sector=4095, size_sectors=2048, size_bytes=1024 * 1024
+            ),
         )
     )
     executor.current = tiny
@@ -423,7 +424,9 @@ async def test_resize_and_move_planning_validation_edges(tmp_path: Path) -> None
     assert "operation_adapter_disabled" in validated.limitations
 
 
-async def test_validate_rejects_not_found_session_status_expiry_identity_and_layout(tmp_path: Path) -> None:
+async def test_validate_rejects_not_found_session_status_expiry_identity_and_layout(
+    tmp_path: Path,
+) -> None:
     engine, executor, store, _ = _engine(tmp_path, _layout(table_type=PartitionTableType.UNKNOWN))
     with pytest.raises(StorageOperationEngineError, match="STORAGE_OPERATION_NOT_FOUND"):
         await engine.validate("missing-operation", session_id="session-valid-1234")
@@ -443,7 +446,9 @@ async def test_validate_rejects_not_found_session_status_expiry_identity_and_lay
 
     transaction = await store.get_transaction(plan.operation_id)
     assert transaction is not None
-    await store.put_transaction(transaction.model_copy(update={"status": StorageTransactionStatus.FAILED}))
+    await store.put_transaction(
+        transaction.model_copy(update={"status": StorageTransactionStatus.FAILED})
+    )
     with pytest.raises(StorageOperationEngineError, match="STORAGE_OPERATION_NOT_VALIDATABLE"):
         await engine.validate(plan.operation_id, session_id=plan.session_id)
 
@@ -454,7 +459,9 @@ async def test_validate_rejects_not_found_session_status_expiry_identity_and_lay
         await engine.validate(plan.operation_id, session_id=plan.session_id)
 
     await store.put_plan(plan)
-    executor.current = _layout(identity=_identity(token="c"), table_type=PartitionTableType.UNKNOWN)
+    executor.current = _layout(
+        identity=_identity(fingerprint_char="c"), table_type=PartitionTableType.UNKNOWN
+    )
     with pytest.raises(StorageOperationEngineError, match="STORAGE_DEVICE_IDENTITY_CHANGED"):
         await engine.validate(plan.operation_id, session_id=plan.session_id)
 
@@ -464,7 +471,9 @@ async def test_validate_rejects_not_found_session_status_expiry_identity_and_lay
 
 
 async def test_validate_dry_run_checkpoint_and_executor_failures(tmp_path: Path) -> None:
-    engine, executor, _, _ = _engine(tmp_path / "dry", _layout(table_type=PartitionTableType.UNKNOWN))
+    engine, executor, _, _ = _engine(
+        tmp_path / "dry", _layout(table_type=PartitionTableType.UNKNOWN)
+    )
     plan = await engine.plan(
         DeclarativeStorageOperationRequest(
             operation="create",
@@ -540,7 +549,9 @@ async def test_authorization_preconditions_and_executor_error(tmp_path: Path) ->
         )
 
 
-async def test_execute_maps_failures_to_failed_or_unknown_and_checks_preconditions(tmp_path: Path) -> None:
+async def test_execute_maps_failures_to_failed_or_unknown_and_checks_preconditions(
+    tmp_path: Path,
+) -> None:
     engine, executor, store, plan = await _validated_create(tmp_path / "unknown")
     grant = await engine.request_authorization(
         plan.operation_id,
@@ -575,7 +586,7 @@ async def test_execute_maps_failures_to_failed_or_unknown_and_checks_preconditio
     record2 = await store2.get_record(plan2.operation_id)
     assert record2 is not None and record2.transaction.status is StorageTransactionStatus.FAILED
 
-    with pytest.raises(StorageOperationEngineError, match="STORAGE_AUTHORIZATION_GRANT_UNAVAILABLE"):
+    with pytest.raises(StorageOperationEngineError, match="STORAGE_OPERATION_NOT_AUTHORIZED"):
         await engine2.execute_authorized(
             plan2.operation_id,
             session_id=plan2.session_id,
@@ -590,12 +601,14 @@ async def test_execute_maps_failures_to_failed_or_unknown_and_checks_preconditio
         )
 
 
-async def test_verify_outcome_and_reconcile_unexpected_and_non_unknown_states(tmp_path: Path) -> None:
+async def test_verify_outcome_and_reconcile_unexpected_and_non_unknown_states(
+    tmp_path: Path,
+) -> None:
     engine, executor, store, plan = await _validated_create(tmp_path)
     bad_identity = plan.proposed_layout.model_copy(
         update={
             "disk": plan.proposed_layout.disk.model_copy(
-                update={"identity": _identity(token="c")}
+                update={"identity": _identity(fingerprint_char="c")}
             )
         }
     )
@@ -633,7 +646,9 @@ async def test_verify_outcome_and_reconcile_unexpected_and_non_unknown_states(tm
     unknown = await engine.reconcile_unknown(plan.operation_id, session_id=plan.session_id)
     assert unknown.status is StorageVerificationStatus.UNKNOWN
     refreshed = await store.get_record(plan.operation_id)
-    assert refreshed is not None and refreshed.transaction.status is StorageTransactionStatus.UNKNOWN
+    assert (
+        refreshed is not None and refreshed.transaction.status is StorageTransactionStatus.UNKNOWN
+    )
 
     with pytest.raises(StorageOperationEngineError, match="STORAGE_OPERATION_SESSION_MISMATCH"):
         await engine.reconcile_unknown(plan.operation_id, session_id="different-session")
@@ -680,22 +695,29 @@ def test_storage_engine_private_helpers_cover_limits_and_impact() -> None:
     assert _required_operations("resize", 1)[0].enabled is False
     assert _required_operations("move", 1)[0].kind == "move_partition"
 
-    assert _filesystem_impact(
-        DataImpactAssessment(
-            level=DataImpactLevel.HIGH,
-            filesystem_change_required=True,
-            executable=False,
+    assert (
+        _filesystem_impact(
+            DataImpactAssessment(
+                level=DataImpactLevel.HIGH,
+                filesystem_change_required=True,
+                executable=False,
+            )
         )
-    ) == "filesystem_change_required_and_not_supported"
-    assert _filesystem_impact(
-        DataImpactAssessment(level=DataImpactLevel.UNKNOWN, executable=False)
-    ) == "filesystem_or_data_impact_blocks_execution"
-    assert _filesystem_impact(
-        DataImpactAssessment(level=DataImpactLevel.LOW, executable=True)
-    ) == "no_filesystem_content_change_planned"
+        == "filesystem_change_required_and_not_supported"
+    )
+    assert (
+        _filesystem_impact(DataImpactAssessment(level=DataImpactLevel.UNKNOWN, executable=False))
+        == "filesystem_or_data_impact_blocks_execution"
+    )
+    assert (
+        _filesystem_impact(DataImpactAssessment(level=DataImpactLevel.LOW, executable=True))
+        == "no_filesystem_content_change_planned"
+    )
 
     identity = _identity()
-    gpt = tuple(_partition(identity, number, 2048 + number * 4096, 1024) for number in range(1, 129))
+    gpt = tuple(
+        _partition(identity, number, 2048 + number * 4096, 1024) for number in range(1, 129)
+    )
     with pytest.raises(StorageOperationEngineError, match="STORAGE_GPT_PARTITION_LIMIT"):
         _next_partition_number(PartitionTableType.GPT, gpt)
     mbr = gpt[:4]
