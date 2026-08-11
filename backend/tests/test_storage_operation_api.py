@@ -70,7 +70,7 @@ async def test_storage_operation_api_full_test_image_lifecycle(tmp_path: Path) -
                     "operation": "create",
                     "target_disk": str(image),
                     "size_bytes": 16 * 1024 * 1024,
-                    "table_type": "gpt",
+                    "table_type": "GPT",
                     "partition_name": "ARES API TEST",
                 },
             )
@@ -114,10 +114,18 @@ async def test_storage_operation_api_full_test_image_lifecycle(tmp_path: Path) -
             assert verification.status_code == 200
             assert cast(dict[str, object], verification.json())["status"] == "VERIFIED"
 
-            graph = await client.get("/api/v1/knowledge/graph", headers=headers)
-            nodes = cast(list[dict[str, object]], cast(dict[str, object], graph.json())["nodes"])
-            kinds = {node["kind"] for node in nodes}
-            assert {"partition_table", "storage_transaction", "storage_verification"} <= kinds
+            graph_kinds: set[object] = set()
+            for _ in range(100):
+                graph = await client.get("/api/v1/knowledge/graph", headers=headers)
+                assert graph.status_code == 200
+                nodes = cast(
+                    list[dict[str, object]], cast(dict[str, object], graph.json())["nodes"]
+                )
+                graph_kinds = {node["kind"] for node in nodes}
+                if "storage_verification" in graph_kinds:
+                    break
+                await asyncio.sleep(0.02)
+            assert {"partition_table", "storage_transaction", "storage_verification"} <= graph_kinds
 
             missing = await client.get("/api/v1/storage/operations/missing-operation")
             assert missing.status_code == 404
@@ -146,7 +154,7 @@ async def test_storage_operation_api_rejects_session_and_pre_auth_execution(
                     "operation": "create",
                     "target_disk": str(image),
                     "size_bytes": 8 * 1024 * 1024,
-                    "table_type": "mbr",
+                    "table_type": "MBR",
                 },
             )
             assert planned.status_code == 200

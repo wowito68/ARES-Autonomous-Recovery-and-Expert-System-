@@ -91,8 +91,21 @@ class StorageBroker:
             return await self._execute(request, send)
         if action == "storage.verify":
             plan = StorageOperationPlan.model_validate(request.get("plan"))
-            await self._validate_preflight_plan(plan, checkpoint_required=True)
-            return (await self.tools.verify_tool.verify(plan)).model_dump(mode="json")
+            await self._validate_postwrite_plan(plan)
+            layout = await self.tools.verify_tool.verify(plan)
+            await self.audit.append(
+                event_type="storage.verification.completed",
+                source="ares-tool-broker",
+                correlation_id=plan.operation_id,
+                session_id=plan.session_id,
+                payload={
+                    "target_fingerprint": plan.target_disk.fingerprint_sha256,
+                    "expected_layout": plan.proposed_layout.partition_table.fingerprint_sha256,
+                    "actual_layout": layout.partition_table.fingerprint_sha256,
+                    "verified": True,
+                },
+            )
+            return layout.model_dump(mode="json")
         raise PartitionToolError("STORAGE_BROKER_ACTION_REJECTED")
 
     async def _checkpoint(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -311,6 +324,41 @@ class StorageBroker:
                 != plan.original_layout.partition_table.fingerprint_sha256
             ):
                 raise PartitionToolError("STORAGE_PROTECTION_CHECKPOINT_INVALID")
+
+    async def _validate_postwrite_plan(self, plan: StorageOperationPlan) -> None:
+        if not storage_plan_integrity_valid(plan) or plan.expires_at <= datetime.now(UTC):
+            raise PartitionToolError("STORAGE_OPERATION_PLAN_INVALID")
+        if not plan.executable or plan.dry_run is None or not plan.dry_run.valid:
+            raise PartitionToolError("STORAGE_OPERATION_NOT_EXECUTABLE")
+        if not self.write_gate.evaluate(plan.target_disk).allowed:
+            raise PartitionToolError("PRODUCTION_STORAGE_WRITE_GATE_BLOCKED")
+        current_identity = await asyncio.to_thread(
+            self.tools.identity.identify,
+            plan.target_disk.requested_path,
+        )
+        if current_identity.fingerprint_sha256 != plan.target_disk.fingerprint_sha256:
+            raise PartitionToolError("STORAGE_DEVICE_IDENTITY_CHANGED")
+        checkpoint = plan.protection_checkpoint
+        if (
+            checkpoint is None
+            or checkpoint.status is not ProtectionCheckpointStatus.READY
+            or checkpoint.session_id != plan.session_id
+            or checkpoint.verification_id is None
+            or plan.protected_resource_id not in checkpoint.protected_resources
+            or checkpoint.resource_fingerprints.get(plan.protected_resource_id)
+            != plan.target_disk.fingerprint_sha256
+        ):
+            raise PartitionToolError("STORAGE_PROTECTION_CHECKPOINT_INVALID")
+        durable = await self.checkpoints.get(checkpoint.id)
+        artifact = await self.operation_store.get_checkpoint(checkpoint.id)
+        if (
+            durable != checkpoint
+            or artifact is None
+            or artifact.operation_id != plan.operation_id
+            or artifact.partition_table_fingerprint_sha256
+            != plan.original_layout.partition_table.fingerprint_sha256
+        ):
+            raise PartitionToolError("STORAGE_PROTECTION_CHECKPOINT_INVALID")
 
     async def _audit_failure(self, plan: StorageOperationPlan, exc: BaseException) -> None:
         code = _safe_code(exc)
