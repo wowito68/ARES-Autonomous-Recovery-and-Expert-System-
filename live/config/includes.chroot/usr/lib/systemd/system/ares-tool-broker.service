@@ -22,5 +22,5 @@ LockPersonality=yes
 NoNewPrivileges=yes
 CapabilityBoundingSet=CAP_SYS_ADMIN
 AmbientCapabilities=CAP_SYS_ADMIN
-ReadWritePaths=/run/ares/sockets /var/lib/ares/broker /var/lib/ares/backups /mnt /media /run/media
+ReadWritePaths=/run/ares/sockets /var/lib/ares/broker /var/lib/ares/backups /var/lib/ares/storage-images /mnt /media /run/media
 IPAddressDeny=any

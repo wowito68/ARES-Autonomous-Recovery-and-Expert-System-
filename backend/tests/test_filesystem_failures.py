@@ -98,9 +98,7 @@ async def _plan(tmp_path: Path) -> tuple[FilesystemToolSuite, FilesystemRepairPl
         executable=True,
         fingerprint_sha256="0" * 64,
     )
-    return tools, draft.model_copy(
-        update={"fingerprint_sha256": repair_plan_fingerprint(draft)}
-    )
+    return tools, draft.model_copy(update={"fingerprint_sha256": repair_plan_fingerprint(draft)})
 
 
 async def test_disappeared_target_is_distinct_from_identity_change(tmp_path: Path) -> None:

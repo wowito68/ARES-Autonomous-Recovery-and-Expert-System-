@@ -20,8 +20,12 @@ from ares.backup.models import AuthorizationGrant, Backup, BackupManifest, Backu
 from ares.protection import ProtectionCheckpointStore
 from ares.runtime.consent import UnixConsentClient
 from ares.runtime.filesystem_broker import FilesystemBroker
+from ares.runtime.storage_broker import StorageBroker
+from ares.storage_operations.policy import ProductionStorageWriteGate
+from ares.storage_operations.store import StorageOperationStore
 from ares.tools.backup import BackupFilesystemTools, BackupToolError
 from ares.tools.filesystem import FilesystemToolError, FilesystemToolSuite
+from ares.tools.partition import PartitionToolError, StoragePartitionToolSuite
 
 _MAX_REQUEST_BYTES = 4_000_000
 _MAX_RESPONSE_BYTES = 128_000_000
@@ -272,6 +276,18 @@ async def serve_tool_broker(
         Path("/var/lib/ares/capabilities/protection/checkpoints")
     )
     filesystem_broker = FilesystemBroker(FilesystemToolSuite(), audit, consent, checkpoint_store)
+    storage_write_gate = ProductionStorageWriteGate()
+    storage_operation_store = StorageOperationStore(
+        Path("/var/lib/ares/capabilities/storage-operations")
+    )
+    storage_broker = StorageBroker(
+        StoragePartitionToolSuite(write_gate=storage_write_gate),
+        audit,
+        consent,
+        checkpoint_store,
+        storage_operation_store,
+        write_gate=storage_write_gate,
+    )
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         async def send(message: dict[str, Any]) -> None:
@@ -292,6 +308,8 @@ async def serve_tool_broker(
             peer_uid = _peer_uid(writer)
             if isinstance(action, str) and action.startswith("filesystem."):
                 result = await filesystem_broker.dispatch(request, peer_uid, send)
+            elif isinstance(action, str) and action.startswith("storage."):
+                result = await storage_broker.dispatch(request, peer_uid, send)
             else:
                 result = await backup_broker.dispatch(request, peer_uid, send)
             await send({"type": "result", "payload": result})
@@ -347,6 +365,8 @@ def _safe_code(exc: BaseException) -> str:
     if isinstance(exc, BackupToolError):
         return exc.code
     if isinstance(exc, FilesystemToolError):
+        return exc.code
+    if isinstance(exc, PartitionToolError):
         return exc.code
     if isinstance(exc, AuditLedgerError):
         return "AUDIT_LEDGER_UNAVAILABLE"

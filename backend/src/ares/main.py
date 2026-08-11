@@ -18,7 +18,12 @@ from ares.backup import (
     UnixBrokerBackupExecutor,
 )
 from ares.capabilities import CapabilityManager, discover_plugins
-from ares.capabilities.plugins import BackupPlugin, DiskAnalysisPlugin, FilesystemRepairPlugin
+from ares.capabilities.plugins import (
+    BackupPlugin,
+    DiskAnalysisPlugin,
+    FilesystemRepairPlugin,
+    StoragePartitionPlugin,
+)
 from ares.config import Environment, Settings, get_settings
 from ares.core.logging import configure_logging
 from ares.core.middleware import RequestContextMiddleware
@@ -36,6 +41,14 @@ from ares.protection import ProtectionCheckpointService, ProtectionCheckpointSto
 from ares.reasoning import ReasoningEngine
 from ares.storage.service import StorageAnalysisService
 from ares.storage.store import StorageSnapshotStore
+from ares.storage_operations import (
+    LocalTestStorageExecutor,
+    ProductionStorageWriteGate,
+    StorageOperationEngine,
+    StorageOperationService,
+    StorageOperationStore,
+    UnixBrokerStorageExecutor,
+)
 from ares.tools import (
     BackupFilesystemTools,
     ReadOnlyStorageProcessRunner,
@@ -43,6 +56,7 @@ from ares.tools import (
     StorageToolSuite,
 )
 from ares.tools.filesystem import FilesystemToolSuite, MountSafetyChecker
+from ares.tools.partition import StoragePartitionToolSuite
 from ares.workflows import WorkflowEngine
 
 
@@ -76,6 +90,10 @@ def create_app(
     backup_store = BackupStore(capability_state_dir / "backups")
     checkpoint_store = ProtectionCheckpointStore(capability_state_dir / "protection/checkpoints")
     filesystem_store = FilesystemRepairStore(capability_state_dir / "filesystems")
+    storage_operation_store = StorageOperationStore(capability_state_dir / "storage-operations")
+    storage_write_gate = ProductionStorageWriteGate(
+        test_mode=resolved_settings.environment is Environment.TEST
+    )
     storage_runner = ReadOnlyStorageProcessRunner(SafeProcessRunner())
     storage_tools = StorageToolSuite(
         inventory_path,
@@ -91,11 +109,26 @@ def create_app(
             allow_regular_file_targets=True,
         )
         filesystem_executor = LocalTestFilesystemExecutor(filesystem_tools)
+        storage_partition_tools = StoragePartitionToolSuite(
+            allow_regular_file_targets=True,
+            write_gate=storage_write_gate,
+        )
+        storage_operation_executor = LocalTestStorageExecutor(storage_partition_tools)
     else:
         backup_executor = UnixBrokerBackupExecutor(resolved_settings.backup_broker_socket)
         audit_ledger = UnixAuditLedgerClient(resolved_settings.audit_socket)
         filesystem_tools = None
         filesystem_executor = UnixBrokerFilesystemExecutor(resolved_settings.backup_broker_socket)
+        storage_partition_tools = None
+        storage_operation_executor = UnixBrokerStorageExecutor(
+            resolved_settings.backup_broker_socket
+        )
+    storage_operation_engine = StorageOperationEngine(
+        executor=storage_operation_executor,
+        store=storage_operation_store,
+        checkpoints=checkpoint_store,
+        write_gate=storage_write_gate,
+    )
     workflow_engine = WorkflowEngine(event_bus, knowledge_graph)
     capability_manager = CapabilityManager(
         workflow_engine,
@@ -105,6 +138,7 @@ def create_app(
         DiskAnalysisPlugin(storage_tools, snapshot_store),
         BackupPlugin(backup_store, backup_tools, backup_executor),
         FilesystemRepairPlugin(filesystem_store, filesystem_executor),
+        StoragePartitionPlugin(storage_operation_engine, storage_operation_store),
     )
     capability_manager.load(
         discover_plugins(
@@ -134,6 +168,13 @@ def create_app(
         audit_ledger,
     )
     protection_service = ProtectionCheckpointService(backup_store, checkpoint_store)
+    storage_operation_service = StorageOperationService(
+        engine=storage_operation_engine,
+        store=storage_operation_store,
+        capabilities=capability_manager,
+        event_bus=event_bus,
+        audit=audit_ledger,
+    )
     filesystem_repair_service = FilesystemRepairService(
         capabilities=capability_manager,
         executor=filesystem_executor,
@@ -153,9 +194,11 @@ def create_app(
         backup_store.prepare()
         checkpoint_store.prepare()
         filesystem_store.prepare()
+        storage_operation_store.prepare()
         try:
             yield
         finally:
+            await storage_operation_service.shutdown()
             await filesystem_repair_service.shutdown()
             await backup_service.shutdown()
             await database.dispose()
@@ -196,6 +239,12 @@ def create_app(
     application.state.filesystem_executor = filesystem_executor
     application.state.filesystem_tools = filesystem_tools
     application.state.filesystem_repair_service = filesystem_repair_service
+    application.state.storage_operation_store = storage_operation_store
+    application.state.storage_write_gate = storage_write_gate
+    application.state.storage_partition_tools = storage_partition_tools
+    application.state.storage_operation_executor = storage_operation_executor
+    application.state.storage_operation_engine = storage_operation_engine
+    application.state.storage_operation_service = storage_operation_service
     application.add_middleware(RequestContextMiddleware)
     install_problem_handlers(application)
     application.include_router(api_router, prefix=resolved_settings.api_prefix)
@@ -208,6 +257,7 @@ def create_app(
             loaders = (
                 '<script src="/backup.js" defer></script>',
                 '<script src="/filesystem.js" defer></script>',
+                '<script src="/partition.js" defer></script>',
             )
             for loader in loaders:
                 if loader not in source:

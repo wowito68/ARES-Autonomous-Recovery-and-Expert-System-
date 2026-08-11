@@ -3,5 +3,11 @@
 from ares.capabilities.plugins.backup import BackupPlugin
 from ares.capabilities.plugins.disk_analysis import DiskAnalysisPlugin
 from ares.capabilities.plugins.filesystem_repair import FilesystemRepairPlugin
+from ares.capabilities.plugins.storage_partition import StoragePartitionPlugin
 
-__all__ = ["BackupPlugin", "DiskAnalysisPlugin", "FilesystemRepairPlugin"]
+__all__ = [
+    "BackupPlugin",
+    "DiskAnalysisPlugin",
+    "FilesystemRepairPlugin",
+    "StoragePartitionPlugin",
+]

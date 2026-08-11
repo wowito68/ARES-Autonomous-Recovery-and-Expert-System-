@@ -17,6 +17,7 @@ from uuid import uuid4
 from ares.audit.ledger import AuditLedger, AuditLedgerError, UnixAuditLedgerClient
 from ares.backup.models import BackupPlan
 from ares.filesystems.models import FilesystemRepairPlan
+from ares.storage_operations.models import StorageOperationPlan
 
 _MAX_MESSAGE_BYTES = 512_000
 _FILESYSTEM_CONFIRMATION = "I understand that this operation modifies the filesystem."
@@ -77,6 +78,9 @@ class ConsentAuthority:
         if action == "filesystem.create":
             self._require_peer(peer_uid, self.broker_uid)
             return await self._create_filesystem(request)
+        if action == "storage.create":
+            self._require_peer(peer_uid, self.broker_uid)
+            return await self._create_storage(request)
         if action == "wait":
             self._require_peer(peer_uid, self.broker_uid)
             return await self._wait(request)
@@ -183,6 +187,55 @@ class ConsentAuthority:
                     if plan.protection_checkpoint is not None
                     else None
                 ),
+            },
+        )
+        return challenge.public()
+
+    async def _create_storage(self, request: dict[str, Any]) -> dict[str, Any]:
+        plan = StorageOperationPlan.model_validate(request.get("plan"))
+        checkpoint = plan.protection_checkpoint
+        challenge = _Challenge(
+            id=uuid4().hex,
+            kind="storage_operation",
+            plan_id=plan.id,
+            fingerprint=plan.fingerprint_sha256,
+            session_id=plan.session_id,
+            correlation_id=plan.operation_id,
+            capability_id=plan.capability,
+            risk=plan.risk,
+            confirmation_phrase=(
+                "I understand that this operation modifies the partition table. "
+                f"APPROVE {plan.fingerprint_sha256[:12]}"
+            ),
+            public_payload={
+                "operation_id": plan.operation_id,
+                "operation": plan.operation.value,
+                "target": plan.target_disk.canonical_path,
+                "target_fingerprint": plan.target_disk.fingerprint_sha256,
+                "device_kind": plan.target_disk.device_kind,
+                "original_layout": plan.original_layout.partition_table.fingerprint_sha256,
+                "proposed_layout": plan.proposed_layout.partition_table.fingerprint_sha256,
+                "data_impact": plan.data_impact.level.value,
+                "boot_impact": plan.boot_impact.level.value,
+                "data_loss_possible": plan.data_loss_possible,
+                "affected_resources": list(plan.affected_resources),
+                "checkpoint_id": checkpoint.id if checkpoint else None,
+                "dry_run_script_sha256": plan.dry_run.script_sha256 if plan.dry_run else None,
+                "physical_disk_writes_enabled": False,
+            },
+            expires_at=min(plan.expires_at, datetime.now(UTC) + timedelta(minutes=10)),
+        )
+        await self._store_and_audit_requested(
+            challenge,
+            {
+                "operation_id": plan.operation_id,
+                "operation": plan.operation.value,
+                "target_fingerprint": plan.target_disk.fingerprint_sha256,
+                "original_layout": plan.original_layout.partition_table.fingerprint_sha256,
+                "proposed_layout": plan.proposed_layout.partition_table.fingerprint_sha256,
+                "data_impact": plan.data_impact.level.value,
+                "boot_impact": plan.boot_impact.level.value,
+                "checkpoint_id": checkpoint.id if checkpoint else None,
             },
         )
         return challenge.public()
@@ -299,6 +352,13 @@ class UnixConsentClient:
         return await _request(
             self.socket_path,
             {"action": "filesystem.create", "plan": plan.model_dump(mode="json")},
+            timeout_seconds=3.0,
+        )
+
+    async def request_storage(self, plan: StorageOperationPlan) -> dict[str, Any]:
+        return await _request(
+            self.socket_path,
+            {"action": "storage.create", "plan": plan.model_dump(mode="json")},
             timeout_seconds=3.0,
         )
 
@@ -439,7 +499,11 @@ def _prepare_socket_path(socket_path: Path) -> None:
 
 
 def _event_prefix(challenge: _Challenge) -> str:
-    return "backup" if challenge.kind == "backup" else "repair"
+    if challenge.kind == "backup":
+        return "backup"
+    if challenge.kind == "storage_operation":
+        return "storage"
+    return "repair"
 
 
 def _safe_error(exc: Exception) -> str:

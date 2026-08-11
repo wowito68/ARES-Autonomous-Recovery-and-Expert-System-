@@ -97,9 +97,7 @@ async def _plan(
         executable=True,
         fingerprint_sha256="0" * 64,
     )
-    return suite, draft.model_copy(
-        update={"fingerprint_sha256": repair_plan_fingerprint(draft)}
-    )
+    return suite, draft.model_copy(update={"fingerprint_sha256": repair_plan_fingerprint(draft)})
 
 
 async def test_inspection_reports_target_not_writable(
@@ -167,9 +165,7 @@ async def test_repair_timeout_never_reaches_successful_verification(tmp_path: Pa
         safe_to_unmount=False,
         safe_to_remount=False,
     )
-    runner.results["e2fsck"].extend(
-        (_result("e2fsck", 4), TimeoutError())
-    )
+    runner.results["e2fsck"].extend((_result("e2fsck", 4), TimeoutError()))
     suite, plan = await _plan(tmp_path, runner, mount)
 
     with pytest.raises(FilesystemToolError) as caught:

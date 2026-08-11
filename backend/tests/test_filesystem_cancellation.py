@@ -69,9 +69,7 @@ async def test_service_cancels_only_before_mutation(tmp_path: Path) -> None:
         executable=True,
         fingerprint_sha256="0" * 64,
     )
-    plan = draft.model_copy(
-        update={"fingerprint_sha256": repair_plan_fingerprint(draft)}
-    )
+    plan = draft.model_copy(update={"fingerprint_sha256": repair_plan_fingerprint(draft)})
     record = FilesystemRepairRecord(
         id=plan.repair_id,
         plan=plan,
