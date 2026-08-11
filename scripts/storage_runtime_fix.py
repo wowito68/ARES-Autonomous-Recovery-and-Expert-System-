@@ -39,7 +39,9 @@ method = '''    async def _validate_postwrite_plan(self, plan: StorageOperationP
             raise PartitionToolError("STORAGE_OPERATION_NOT_EXECUTABLE")
         if not self.write_gate.evaluate(plan.target_disk).allowed:
             raise PartitionToolError("PRODUCTION_STORAGE_WRITE_GATE_BLOCKED")
-        current_identity = await self.tools.identity.inspect(plan.target_disk.requested_path)
+        current_identity = await self.tools.identity.inspect(
+            plan.target_disk.requested_path
+        )
         if current_identity.fingerprint_sha256 != plan.target_disk.fingerprint_sha256:
             raise PartitionToolError("STORAGE_DEVICE_IDENTITY_CHANGED")
         checkpoint = plan.protection_checkpoint
@@ -88,7 +90,11 @@ new = '''            graph_kinds: set[object] = set()
                 if "storage_verification" in graph_kinds:
                     break
                 await asyncio.sleep(0.02)
-            assert {"partition_table", "storage_transaction", "storage_verification"} <= graph_kinds
+            assert {
+                "partition_table",
+                "storage_transaction",
+                "storage_verification",
+            } <= graph_kinds
 '''
 if old not in text:
     raise SystemExit("graph assertion block not found")
