@@ -32,10 +32,13 @@ jobs:
           path = Path('backend/tests/test_storage_partition_edges.py')
           text = path.read_text(encoding='utf-8')
           text = text.replace('import asyncio\n', '')
+          if 'import shutil\n' not in text:
+              text = text.replace('import json\n', 'import json\nimport shutil\n', 1)
           text = text.replace(
               'identity.identify("/tmp/bad\\x00name")',
               'identity.identify(str(tmp_path / "bad") + "\\x00name")',
           )
+          text = text.replace('partition_tools.shutil', 'shutil')
           path.write_text(text, encoding='utf-8')
           PY
       - name: Format edge tests
