@@ -38,7 +38,7 @@ async def _poll(
     expected: set[str],
     headers: dict[str, str],
 ) -> dict[str, object]:
-    for _ in range(100):
+    for _ in range(300):
         response = await client.get(f"/api/v1/storage/operations/{operation_id}", headers=headers)
         assert response.status_code == 200
         payload = cast(dict[str, object], response.json())

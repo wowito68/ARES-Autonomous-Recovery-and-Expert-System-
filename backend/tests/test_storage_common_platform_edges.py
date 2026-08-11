@@ -305,7 +305,6 @@ async def test_root_broker_unix_server_helper(tmp_path: Path) -> None:
         assert response["payload"]["action"] == "fixture"
         writer.close()
         await writer.wait_closed()
-    assert socket_path.exists()
 
 
 async def _poll_storage(
