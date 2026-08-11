@@ -1,0 +1,36 @@
+name: Boot Integration Inspector
+
+on:
+  push:
+    branches: [agent/boot-recovery-management]
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Show integration anchors
+        run: |
+          echo '=== GRAPH ==='
+          sed -n '1,90p' backend/src/ares/knowledge/graph.py
+          echo '=== ROUTER ==='
+          cat backend/src/ares/api/router.py
+          echo '=== MAIN IMPORTS ==='
+          sed -n '1,130p' backend/src/ares/main.py
+          echo '=== MAIN COMPOSITION ==='
+          sed -n '130,340p' backend/src/ares/main.py
+          echo '=== CONSENT TYPES/DISPATCH ==='
+          grep -nE 'class ConsentChallenge|class ConsentAuthority|def dispatch|backup.create|filesystem.create|storage.create|class UnixConsentClient|def request_' backend/src/ares/runtime/consent.py
+          sed -n '30,210p' backend/src/ares/runtime/consent.py
+          sed -n '210,420p' backend/src/ares/runtime/consent.py
+          echo '=== ROOT BROKER ==='
+          grep -nE 'serve_tool_broker|StorageBroker|FilesystemBroker|BackupBroker|action.startswith|dispatch' backend/src/ares/runtime/broker.py
+          sed -n '1,180p' backend/src/ares/runtime/broker.py
+          sed -n '180,440p' backend/src/ares/runtime/broker.py
+          echo '=== CLI ==='
+          grep -nE 'add_parser\("storage|add_parser\("backup|filesystem|consent|async def _.*command|def main' backend/src/ares/cli.py
+          sed -n '1,190p' backend/src/ares/cli.py
+          sed -n '190,520p' backend/src/ares/cli.py
