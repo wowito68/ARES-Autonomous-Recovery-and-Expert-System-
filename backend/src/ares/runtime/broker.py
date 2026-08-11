@@ -16,7 +16,14 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from ares.audit.ledger import AuditLedger, AuditLedgerError, UnixAuditLedgerClient
-from ares.backup.models import AuthorizationGrant, Backup, BackupManifest, BackupPlan
+from ares.backup.models import (
+    AuthorizationGrant,
+    Backup,
+    BackupEntry,
+    BackupManifest,
+    BackupPlan,
+    BackupProgress,
+)
 from ares.protection import ProtectionCheckpointStore
 from ares.runtime.consent import UnixConsentClient
 from ares.runtime.filesystem_broker import FilesystemBroker
@@ -30,6 +37,7 @@ from ares.tools.partition import PartitionToolError, StoragePartitionToolSuite
 _MAX_REQUEST_BYTES = 4_000_000
 _MAX_RESPONSE_BYTES = 128_000_000
 BrokerSend = Callable[[dict[str, Any]], Awaitable[None]]
+UnixHandler = Callable[[asyncio.StreamReader, asyncio.StreamWriter], Awaitable[None]]
 
 
 class ConsentClient(Protocol):
@@ -162,10 +170,10 @@ class BackupBroker:
             },
         )
 
-        async def progress(value) -> None:
+        async def progress(value: BackupProgress) -> None:
             await send({"type": "progress", "payload": value.model_dump(mode="json")})
 
-        async def entry(value) -> None:
+        async def entry(value: BackupEntry) -> None:
             await send(
                 {
                     "type": "entry",
@@ -335,10 +343,10 @@ def _peer_uid(writer: asyncio.StreamWriter) -> int:
     size = struct.calcsize("3i")
     credentials = peer.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, size)
     _, uid, _ = struct.unpack("3i", credentials)
-    return uid
+    return int(uid)
 
 
-async def _unix_server(handler, socket_path: Path) -> asyncio.AbstractServer:
+async def _unix_server(handler: UnixHandler, socket_path: Path) -> asyncio.AbstractServer:
     listen_fds = int(os.environ.get("LISTEN_FDS", "0") or "0")
     listen_pid = int(os.environ.get("LISTEN_PID", "0") or "0")
     if listen_fds >= 1 and listen_pid == os.getpid():

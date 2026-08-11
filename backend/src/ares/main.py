@@ -10,8 +10,9 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from ares.api.router import api_router
-from ares.audit import MemoryAuditLedger, UnixAuditLedgerClient
+from ares.audit import AuditLedger, MemoryAuditLedger, UnixAuditLedgerClient
 from ares.backup import (
+    BackupExecutor,
     BackupService,
     BackupStore,
     LocalTestBackupExecutor,
@@ -31,7 +32,11 @@ from ares.core.problems import install_problem_handlers
 from ares.database import Database
 from ares.diagnostics import DiagnosticStore
 from ares.events import EventBus, JsonlEventSink
-from ares.filesystems.executor import LocalTestFilesystemExecutor, UnixBrokerFilesystemExecutor
+from ares.filesystems.executor import (
+    FilesystemExecutor,
+    LocalTestFilesystemExecutor,
+    UnixBrokerFilesystemExecutor,
+)
 from ares.filesystems.service import FilesystemRepairService
 from ares.filesystems.store import FilesystemRepairStore
 from ares.knowledge import KnowledgeGraph
@@ -45,6 +50,7 @@ from ares.storage_operations import (
     LocalTestStorageExecutor,
     ProductionStorageWriteGate,
     StorageOperationEngine,
+    StorageOperationExecutor,
     StorageOperationService,
     StorageOperationStore,
     UnixBrokerStorageExecutor,
@@ -101,6 +107,10 @@ def create_app(
         process_probes_enabled=resolved_settings.storage_process_probes_enabled,
     )
     backup_tools = BackupFilesystemTools()
+    backup_executor: BackupExecutor
+    audit_ledger: AuditLedger
+    filesystem_executor: FilesystemExecutor
+    storage_operation_executor: StorageOperationExecutor
     if resolved_settings.environment is Environment.TEST:
         backup_executor = LocalTestBackupExecutor(backup_tools)
         audit_ledger = MemoryAuditLedger()

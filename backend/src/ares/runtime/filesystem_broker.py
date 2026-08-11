@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import os
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
@@ -17,6 +18,8 @@ from ares.filesystems.integrity import repair_plan_integrity_valid
 from ares.filesystems.models import FilesystemAuthorizationGrant, FilesystemRepairPlan
 from ares.protection import ProtectionCheckpointStatus, ProtectionCheckpointStore
 from ares.tools.filesystem import FilesystemToolError, FilesystemToolSuite
+
+FilesystemBrokerSend = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 class FilesystemConsentClient(Protocol):
@@ -51,7 +54,7 @@ class FilesystemBroker:
         self,
         request: dict[str, Any],
         peer_uid: int,
-        send,
+        send: FilesystemBrokerSend,
     ) -> dict[str, Any]:
         if peer_uid not in self.allowed_client_uids:
             raise PermissionError("broker client not authorized")
@@ -83,7 +86,9 @@ class FilesystemBroker:
         )
         return inspection.model_dump(mode="json")
 
-    async def _authorize(self, request: dict[str, Any], send) -> dict[str, Any]:
+    async def _authorize(
+        self, request: dict[str, Any], send: FilesystemBrokerSend
+    ) -> dict[str, Any]:
         plan = FilesystemRepairPlan.model_validate(request.get("plan"))
         await self._validate_plan(plan)
         await self.tools.revalidate(plan.target)
@@ -161,7 +166,7 @@ class FilesystemBroker:
         )
         return grant.model_dump(mode="json")
 
-    async def _execute(self, request: dict[str, Any], send) -> dict[str, Any]:
+    async def _execute(self, request: dict[str, Any], send: FilesystemBrokerSend) -> dict[str, Any]:
         plan = FilesystemRepairPlan.model_validate(request.get("plan"))
         grant = FilesystemAuthorizationGrant.model_validate(request.get("grant"))
         async with self._lock:

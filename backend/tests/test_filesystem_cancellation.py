@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import cast
 
 from ares.events import EventBus, MemoryEventSink
 from ares.filesystems.integrity import repair_plan_fingerprint
@@ -87,7 +86,7 @@ async def test_service_cancels_only_before_mutation(tmp_path: Path) -> None:
         await asyncio.sleep(3600)
 
     task = asyncio.create_task(pending_authorization())
-    service = cast(FilesystemRepairService, object.__new__(FilesystemRepairService))
+    service = object.__new__(FilesystemRepairService)
     service.store = store
     service.event_bus = EventBus(MemoryEventSink())
     service._task_lock = asyncio.Lock()

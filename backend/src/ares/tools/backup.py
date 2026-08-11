@@ -10,6 +10,7 @@ import shutil
 import stat
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic
 from typing import Any
@@ -814,9 +815,7 @@ def _random_id() -> str:
     return os.urandom(16).hex()
 
 
-def _utc_now():
-    from datetime import UTC, datetime
-
+def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 

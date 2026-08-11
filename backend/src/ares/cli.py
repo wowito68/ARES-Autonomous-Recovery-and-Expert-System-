@@ -9,6 +9,8 @@ import sys
 from typing import Literal, cast
 from uuid import uuid4
 
+from fastapi import FastAPI
+
 from ares.backup import BackupCreateRequest, BackupPlanRequest, BackupService, BackupServiceError
 from ares.backup.models import BackupStatus
 from ares.config import get_settings
@@ -148,15 +150,15 @@ async def _main(args: argparse.Namespace) -> int:
     return 1
 
 
-async def _storage_command(args: argparse.Namespace, application) -> int:
+async def _storage_command(args: argparse.Namespace, application: FastAPI) -> int:
     service = cast(StorageAnalysisService, application.state.storage_analysis_service)
     if args.storage_command == "analyze":
         try:
-            result = await service.analyze(session_id=f"cli-{uuid4().hex}")
+            analysis_result = await service.analyze(session_id=f"cli-{uuid4().hex}")
         except StorageAnalysisError as exc:
             print(f"ARES storage analysis failed: {exc.code}", file=sys.stderr)
             return 2
-        print(result.model_dump_json(indent=2))
+        print(analysis_result.model_dump_json(indent=2))
         return 0
     if args.storage_command == "snapshot":
         snapshot_id = cast(str | None, args.snapshot_id)
@@ -174,8 +176,8 @@ async def _storage_command(args: argparse.Namespace, application) -> int:
     session_id = f"cli-{uuid4().hex}"
     try:
         if args.storage_command == "layout":
-            result = await operation_service.layout(cast(str, args.target_disk))
-            print(result.model_dump_json(indent=2))
+            layout_result = await operation_service.layout(cast(str, args.target_disk))
+            print(layout_result.model_dump_json(indent=2))
             return 0
         if args.storage_command == "plan":
             payload = StorageOperationPlanRequest(
@@ -191,10 +193,10 @@ async def _storage_command(args: argparse.Namespace, application) -> int:
                     else None
                 ),
             )
-            result = await operation_service.plan(
+            operation_plan = await operation_service.plan(
                 payload, session_id=session_id, created_by="local-cli-user"
             )
-            print(result.model_dump_json(indent=2))
+            print(operation_plan.model_dump_json(indent=2))
             return 0
         operation_id = cast(str, args.operation_id)
         record = await operation_service.get(operation_id)
@@ -202,8 +204,8 @@ async def _storage_command(args: argparse.Namespace, application) -> int:
             # CLI commands are separate processes; preserve the transaction's stable session.
             session_id = record.transaction.session_id
         if args.storage_command == "validate":
-            result = await operation_service.validate(operation_id, session_id=session_id)
-            print(result.model_dump_json(indent=2))
+            validated_plan = await operation_service.validate(operation_id, session_id=session_id)
+            print(validated_plan.model_dump_json(indent=2))
             return 0
         if args.storage_command == "authorize":
             accepted = await operation_service.authorize(
@@ -231,8 +233,10 @@ async def _storage_command(args: argparse.Namespace, application) -> int:
             print(record.model_dump_json(indent=2))
             return 0
         if args.storage_command == "reconcile":
-            result = await operation_service.reconcile_unknown(operation_id, session_id=session_id)
-            print(result.model_dump_json(indent=2))
+            reconciliation = await operation_service.reconcile_unknown(
+                operation_id, session_id=session_id
+            )
+            print(reconciliation.model_dump_json(indent=2))
             return 0
     except StorageOperationServiceError as exc:
         print(f"ARES storage operation failed: {exc.code}", file=sys.stderr)
@@ -240,7 +244,7 @@ async def _storage_command(args: argparse.Namespace, application) -> int:
     return 1
 
 
-async def _backup_command(args: argparse.Namespace, application) -> int:
+async def _backup_command(args: argparse.Namespace, application: FastAPI) -> int:
     service = cast(BackupService, application.state.backup_service)
     session_id = f"cli-{uuid4().hex}"
     try:
@@ -314,7 +318,7 @@ async def _backup_command(args: argparse.Namespace, application) -> int:
     return 1
 
 
-async def _filesystem_command(args: argparse.Namespace, application) -> int:
+async def _filesystem_command(args: argparse.Namespace, application: FastAPI) -> int:
     service = cast(FilesystemRepairService, application.state.filesystem_repair_service)
     session_id = f"cli-{uuid4().hex}"
     try:
@@ -332,12 +336,12 @@ async def _filesystem_command(args: argparse.Namespace, application) -> int:
             if value is None:
                 print("A device is required after 'repair plan'.", file=sys.stderr)
                 return 2
-            plan = await service.plan(
+            created_plan = await service.plan(
                 FilesystemRepairPlanRequest(device=value, backup_id=args.backup_id),
                 session_id=session_id,
             )
-            print(plan.model_dump_json(indent=2))
-            return 0 if plan.executable else 3
+            print(created_plan.model_dump_json(indent=2))
+            return 0 if created_plan.executable else 3
         if action == "status":
             if value is None:
                 print("A repair id is required after 'repair status'.", file=sys.stderr)
@@ -354,13 +358,13 @@ async def _filesystem_command(args: argparse.Namespace, application) -> int:
                 file=sys.stderr,
             )
             return 2
-        plan = await service.get_plan(action)
-        if plan is None:
+        stored_plan = await service.get_plan(action)
+        if stored_plan is None:
             print("Filesystem repair plan not found.", file=sys.stderr)
             return 3
         print("FILESYSTEM REPAIR PLAN")
-        print(plan.model_dump_json(indent=2))
-        if not plan.executable:
+        print(stored_plan.model_dump_json(indent=2))
+        if not stored_plan.executable:
             print("Plan is blocked by safety preconditions.", file=sys.stderr)
             return 4
         confirmation = await asyncio.to_thread(
@@ -371,7 +375,7 @@ async def _filesystem_command(args: argparse.Namespace, application) -> int:
             print("Repair request cancelled before authorization.", file=sys.stderr)
             return 4
         accepted = await service.start(
-            FilesystemRepairStartRequest(plan_id=plan.id, request_authorization=True),
+            FilesystemRepairStartRequest(plan_id=stored_plan.id, request_authorization=True),
             session_id=session_id,
             created_by="local-cli-user",
         )

@@ -10,7 +10,9 @@ import pytest
 import ares.tools.backup as backup_tools_module
 from ares.backup.models import (
     Backup,
+    BackupEntry,
     BackupExecution,
+    BackupPlan,
     BackupPolicy,
     BackupProgress,
     BackupStatus,
@@ -42,7 +44,7 @@ def _tools(
     return BackupFilesystemTools(mountinfo), source, destination
 
 
-def _backup(plan) -> Backup:
+def _backup(plan: BackupPlan) -> Backup:
     progress = BackupProgress(
         files_completed=plan.included_file_count,
         files_total=plan.included_file_count,
@@ -170,12 +172,12 @@ def test_plan_rejects_unwritable_destination(
 ) -> None:
     tools, source, destination = _tools(tmp_path)
     (source / "file.txt").write_text("data", encoding="utf-8")
-    original = backup_tools_module.os.access
+    original = os.access
 
     def access(path: os.PathLike[str] | str, mode: int) -> bool:
         return False if Path(path) == destination else original(path, mode)
 
-    monkeypatch.setattr(backup_tools_module.os, "access", access)
+    monkeypatch.setattr(os, "access", access)
     with pytest.raises(BackupToolError, match="BACKUP_DESTINATION_NOT_WRITABLE"):
         tools.build_plan(str(source), str(destination), BackupPolicy())
 
@@ -204,7 +206,7 @@ async def test_create_manifest_progress_and_verify_large_file(tmp_path: Path) ->
     async def on_progress(value: BackupProgress) -> None:
         progress.append(value)
 
-    async def on_entry(value) -> None:
+    async def on_entry(value: BackupEntry) -> None:
         entries.append(value)
 
     manifest = await tools.create_backup(plan, on_progress, on_entry)
@@ -225,7 +227,7 @@ async def test_verify_detects_data_corruption_and_unexpected_entries(tmp_path: P
     (source / "file.txt").write_text("original", encoding="utf-8")
     plan = tools.build_plan(str(source), str(destination), BackupPolicy())
 
-    async def noop(_) -> None:
+    async def noop(_: object) -> None:
         return None
 
     manifest = await tools.create_backup(plan, noop, noop)
@@ -246,7 +248,7 @@ async def test_verify_detects_destination_manifest_corruption(tmp_path: Path) ->
     (source / "file.txt").write_text("data", encoding="utf-8")
     plan = tools.build_plan(str(source), str(destination), BackupPolicy())
 
-    async def noop(_) -> None:
+    async def noop(_: object) -> None:
         return None
 
     manifest = await tools.create_backup(plan, noop, noop)
@@ -264,7 +266,7 @@ async def test_verify_reports_source_changed_after_copy(tmp_path: Path) -> None:
     file_path.write_text("before", encoding="utf-8")
     plan = tools.build_plan(str(source), str(destination), BackupPolicy())
 
-    async def noop(_) -> None:
+    async def noop(_: object) -> None:
         return None
 
     manifest = await tools.create_backup(plan, noop, noop)
@@ -288,7 +290,7 @@ async def test_cancellation_removes_partial_backup(tmp_path: Path) -> None:
             reached_chunk.set()
             await release.wait()
 
-    async def noop(_) -> None:
+    async def noop(_: object) -> None:
         return None
 
     task = asyncio.create_task(tools.create_backup(plan, on_progress, noop))

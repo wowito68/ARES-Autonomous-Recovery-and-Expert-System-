@@ -7,6 +7,7 @@ import json
 import os
 import socket
 import struct
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -20,6 +21,7 @@ from ares.filesystems.models import FilesystemRepairPlan
 from ares.storage_operations.models import StorageOperationPlan
 
 _MAX_MESSAGE_BYTES = 512_000
+UnixHandler = Callable[[asyncio.StreamReader, asyncio.StreamWriter], Awaitable[None]]
 _FILESYSTEM_CONFIRMATION = "I understand that this operation modifies the filesystem."
 
 
@@ -476,10 +478,10 @@ def _peer_uid(writer: asyncio.StreamWriter) -> int:
     size = struct.calcsize("3i")
     credentials = peer.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, size)
     _, uid, _ = struct.unpack("3i", credentials)
-    return uid
+    return int(uid)
 
 
-async def _unix_server(handler, socket_path: Path) -> asyncio.AbstractServer:
+async def _unix_server(handler: UnixHandler, socket_path: Path) -> asyncio.AbstractServer:
     listen_fds = int(os.environ.get("LISTEN_FDS", "0") or "0")
     listen_pid = int(os.environ.get("LISTEN_PID", "0") or "0")
     if listen_fds >= 1 and listen_pid == os.getpid():

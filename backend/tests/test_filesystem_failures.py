@@ -189,7 +189,7 @@ async def test_service_refuses_cancellation_after_destructive_phase_started(
         ),
     )
     await store.put_repair(record)
-    service = cast(FilesystemRepairService, object.__new__(FilesystemRepairService))
+    service = object.__new__(FilesystemRepairService)
     service.store = store
 
     with pytest.raises(FilesystemServiceError) as caught:

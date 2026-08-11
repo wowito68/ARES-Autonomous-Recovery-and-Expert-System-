@@ -9,6 +9,7 @@ import pytest
 
 from ares.filesystems.integrity import repair_plan_fingerprint
 from ares.filesystems.models import (
+    DeviceIdentity,
     FilesystemRepairPlan,
     FilesystemType,
     MountRecord,
@@ -50,7 +51,7 @@ class FixedMountChecker:
     def __init__(self, report: MountSafetyReport) -> None:
         self.report = report
 
-    def inspect(self, identity) -> MountSafetyReport:
+    def inspect(self, identity: DeviceIdentity) -> MountSafetyReport:
         del identity
         return self.report
 

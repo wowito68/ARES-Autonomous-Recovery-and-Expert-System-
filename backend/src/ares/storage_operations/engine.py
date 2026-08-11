@@ -867,9 +867,8 @@ def _required_operations(
                 enabled=True,
             ),
         )
-    kind = cast(
-        Literal["resize_partition", "move_partition"],
-        "resize_partition" if operation == "resize" else "move_partition",
+    kind: Literal["resize_partition", "move_partition"] = (
+        "resize_partition" if operation == "resize" else "move_partition"
     )
     return (
         StoragePrimitiveOperation(

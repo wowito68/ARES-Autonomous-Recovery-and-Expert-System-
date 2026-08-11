@@ -10,7 +10,9 @@ from ares.backup.models import BackupPolicy, BackupVerificationStatus
 from ares.tools.backup import BackupFilesystemTools, BackupToolError
 
 
-def _fixture(tmp_path: Path, *, destination_fs: str = "ext4"):
+def _fixture(
+    tmp_path: Path, *, destination_fs: str = "ext4"
+) -> tuple[BackupFilesystemTools, Path, Path]:
     source = tmp_path / "source"
     destination = tmp_path / "destination"
     source.mkdir()
@@ -51,7 +53,7 @@ async def test_backup_does_not_depend_on_external_copy_or_hash_tools(
     monkeypatch.setattr(shutil, "which", lambda _: None)
     plan = tools.build_plan(str(source), str(destination), BackupPolicy())
 
-    async def noop(_) -> None:
+    async def noop(_: object) -> None:
         return None
 
     manifest = await tools.create_backup(plan, noop, noop)

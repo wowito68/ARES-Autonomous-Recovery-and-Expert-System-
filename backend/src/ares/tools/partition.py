@@ -12,7 +12,7 @@ import stat
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from time import monotonic
-from typing import Protocol
+from typing import Literal, Protocol
 from uuid import uuid4
 
 from ares.storage_operations.integrity import (
@@ -177,7 +177,7 @@ class DiskIdentityTool:
         if stat.S_ISREG(info.st_mode):
             if not self.allow_regular_file_targets and not self._controlled(canonical):
                 raise PartitionToolError("STORAGE_IMAGE_OUTSIDE_CONTROLLED_ROOT")
-            kind = "regular_file"
+            kind: Literal["regular_file", "loop", "block"] = "regular_file"
             major_minor = f"file:{info.st_dev}:{info.st_ino}"
             size_bytes = info.st_size
             logical_sector = physical_sector = 512
@@ -483,6 +483,7 @@ class PartitionTableTool:
         state = self.runner.inspect("blkid")
         if not state.available:
             return {}
+        args: tuple[str, ...]
         if identity.device_kind == "regular_file":
             offset = partition.start_sector * identity.logical_sector_size
             size = partition.size_sectors * identity.logical_sector_size
@@ -1157,7 +1158,9 @@ def _detect_os(source: str, mount_point: str) -> OperatingSystemResource | None:
         return None
 
 
-def _filesystem_resize_support(fs_type: str) -> str:
+def _filesystem_resize_support(
+    fs_type: str,
+) -> Literal["grow", "shrink_and_grow", "unsupported", "unknown"]:
     normalized = fs_type.casefold()
     if normalized in {"ext2", "ext3", "ext4", "btrfs", "ntfs"}:
         return "shrink_and_grow"

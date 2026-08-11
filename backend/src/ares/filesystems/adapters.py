@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, cast
 
 from ares.filesystems.models import (
     FilesystemCheckResult,
@@ -287,11 +287,14 @@ class NtfsFilesystemAdapter:
         return False
 
 
-_ADAPTERS: tuple[FilesystemAdapter, ...] = (
-    ExtFilesystemAdapter(),
-    XfsFilesystemAdapter(),
-    BtrfsFilesystemAdapter(),
-    NtfsFilesystemAdapter(),
+_ADAPTERS = cast(
+    tuple[FilesystemAdapter, ...],
+    (
+        ExtFilesystemAdapter(),
+        XfsFilesystemAdapter(),
+        BtrfsFilesystemAdapter(),
+        NtfsFilesystemAdapter(),
+    ),
 )
 
 
