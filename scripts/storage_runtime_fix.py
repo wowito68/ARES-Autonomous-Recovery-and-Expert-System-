@@ -11,7 +11,7 @@ old = '''        if action == "storage.verify":
 new = '''        if action == "storage.verify":
             plan = StorageOperationPlan.model_validate(request.get("plan"))
             await self._validate_postwrite_plan(plan)
-            verification = await self.tools.verify_tool.verify(plan)
+            layout = await self.tools.verify_tool.verify(plan)
             await self.audit.append(
                 event_type="storage.verification.completed",
                 source="ares-tool-broker",
@@ -19,13 +19,12 @@ new = '''        if action == "storage.verify":
                 session_id=plan.session_id,
                 payload={
                     "target_fingerprint": plan.target_disk.fingerprint_sha256,
-                    "status": verification.status.value,
-                    "before_layout": verification.before_layout_fingerprint_sha256,
-                    "expected_layout": verification.expected_layout_fingerprint_sha256,
-                    "after_layout": verification.after_layout_fingerprint_sha256,
+                    "expected_layout": plan.proposed_layout.partition_table.fingerprint_sha256,
+                    "actual_layout": layout.partition_table.fingerprint_sha256,
+                    "verified": True,
                 },
             )
-            return verification.model_dump(mode="json")
+            return layout.model_dump(mode="json")
 '''
 if old not in text:
     raise SystemExit("storage.verify dispatch block not found")
@@ -39,8 +38,9 @@ method = '''    async def _validate_postwrite_plan(self, plan: StorageOperationP
             raise PartitionToolError("STORAGE_OPERATION_NOT_EXECUTABLE")
         if not self.write_gate.evaluate(plan.target_disk).allowed:
             raise PartitionToolError("PRODUCTION_STORAGE_WRITE_GATE_BLOCKED")
-        current_identity = await self.tools.identity.inspect(
-            plan.target_disk.requested_path
+        current_identity = await asyncio.to_thread(
+            self.tools.identity.identify,
+            plan.target_disk.requested_path,
         )
         if current_identity.fingerprint_sha256 != plan.target_disk.fingerprint_sha256:
             raise PartitionToolError("STORAGE_DEVICE_IDENTITY_CHANGED")
@@ -90,11 +90,7 @@ new = '''            graph_kinds: set[object] = set()
                 if "storage_verification" in graph_kinds:
                     break
                 await asyncio.sleep(0.02)
-            assert {
-                "partition_table",
-                "storage_transaction",
-                "storage_verification",
-            } <= graph_kinds
+            assert {"partition_table", "storage_transaction", "storage_verification"} <= graph_kinds
 '''
 if old not in text:
     raise SystemExit("graph assertion block not found")
