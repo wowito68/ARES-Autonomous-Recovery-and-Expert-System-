@@ -14,7 +14,6 @@ from ares.filesystems.executor import (
 )
 from ares.filesystems.integrity import repair_plan_fingerprint, repair_plan_integrity_valid
 from ares.filesystems.models import (
-    DeviceIdentity,
     FilesystemRepairPlan,
     FilesystemRepairRecord,
     FilesystemType,
@@ -103,7 +102,7 @@ async def _plan(tmp_path: Path) -> tuple[FilesystemToolSuite, FilesystemRepairPl
 
 async def test_disappeared_target_is_distinct_from_identity_change(tmp_path: Path) -> None:
     tools, plan = await _plan(tmp_path)
-    Path(plan.target.canonical_path).unlink()
+    await asyncio.to_thread(Path(plan.target.canonical_path).unlink)
 
     with pytest.raises(FilesystemToolError) as caught:
         await tools.revalidate(plan.target)

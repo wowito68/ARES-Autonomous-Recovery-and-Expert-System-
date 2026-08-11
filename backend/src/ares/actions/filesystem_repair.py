@@ -435,7 +435,10 @@ def _verification_status(
     if plan.filesystem is FilesystemType.NTFS and outcome.repair_tool != "none":
         return (
             RepairVerificationStatus.PARTIAL,
-            "ntfsfix terminó y el check Linux no detecta errores comunes, pero Windows CHKDSK sigue siendo necesario.",
+            (
+                "ntfsfix terminó y el check Linux no detecta errores comunes, "
+                "pero Windows CHKDSK sigue siendo necesario."
+            ),
         )
     if plan.mount.mounted and outcome.remounted is not True:
         return (

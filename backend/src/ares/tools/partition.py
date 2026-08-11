@@ -1039,9 +1039,12 @@ def _partition_id(
 
 
 def _partition_path(identity: StorageDeviceIdentity, raw_node: object, number: int) -> str:
-    if identity.device_kind != "regular_file" and isinstance(raw_node, str):
-        if _SAFE_DEVICE.fullmatch(raw_node):
-            return raw_node
+    if (
+        identity.device_kind != "regular_file"
+        and isinstance(raw_node, str)
+        and _SAFE_DEVICE.fullmatch(raw_node)
+    ):
+        return raw_node
     if identity.device_kind == "regular_file":
         return f"image:{token_sha256(identity.canonical_path)[:16]}:{number}"
     base = identity.canonical_path

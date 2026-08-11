@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import math
-from datetime import UTC, datetime
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Literal, cast
 from uuid import uuid4
 
@@ -586,7 +586,9 @@ class StorageOperationEngine:
                 after=current,
                 evidence=("reconciled_after_unknown=original_layout",),
                 limitations=("No committed partition-table change was observed.",),
-                message="Reinspection found the original layout; transaction is aborted, not retried.",
+                message=(
+                    "Reinspection found the original layout; transaction is aborted, not retried."
+                ),
             )
             status = StorageTransactionStatus.ABORTED
             error_code = "STORAGE_UNKNOWN_RECONCILED_NO_CHANGE"
@@ -874,7 +876,8 @@ def _required_operations(
             id=f"storage.partition.{operation}",
             kind=kind,
             description=(
-                "Architecture is modeled, but the executable adapter is disabled until filesystem-aware recovery exists."
+                "Architecture is modeled, but the executable adapter is disabled until "
+                "filesystem-aware recovery exists."
             ),
             partition_number=partition_number,
             mutates_target=True,
@@ -887,7 +890,9 @@ def _verification_plan() -> tuple[StorageVerificationStep, ...]:
     return (
         StorageVerificationStep(
             id="storage.verify-device-identity",
-            description="Compare current multi-attribute device fingerprint with the approved target.",
+            description=(
+                "Compare current multi-attribute device fingerprint with the approved target."
+            ),
         ),
         StorageVerificationStep(
             id="storage.verify-partition-table",

@@ -105,7 +105,10 @@ def analyze_data_impact(
             ),
             affected_resources=(target.id,) if target is not None else (),
             reasons=(
-                "Partition resize/move requires filesystem-aware data movement policy that is not enabled.",
+                (
+                    "Partition resize/move requires filesystem-aware data movement policy "
+                    "that is not enabled."
+                ),
             ),
             filesystem_change_required=True,
             data_loss_possible=True,

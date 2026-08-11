@@ -301,7 +301,9 @@ class PartitionCreateCapability(_PartitionMutationCapability):
             "Creates one partition only inside verified free space on a controlled disk image or "
             "controlled loop target; physical-disk writes are hard-blocked."
         ),
-        objective="Create a partition-table entry without formatting or wiping contained signatures.",
+        objective=(
+            "Create a partition-table entry without formatting or wiping contained signatures."
+        ),
         risk=RiskLevel.MEDIUM,
         enabled=True,
     )
@@ -315,7 +317,9 @@ class PartitionDeleteCapability(_PartitionMutationCapability):
             "Deletes only a blank, unmounted, non-boot, non-encrypted, non-LVM/RAID partition "
             "from a controlled image/loop target after exact protection and authorization."
         ),
-        objective="Remove an eligible test partition table entry with verifiable before/after state.",
+        objective=(
+            "Remove an eligible test partition table entry with verifiable before/after state."
+        ),
         risk=RiskLevel.HIGH,
         enabled=True,
     )
@@ -325,8 +329,12 @@ class PartitionResizeCapability(_PartitionMutationCapability):
     metadata = _mutation_metadata(
         "storage.partition.resize",
         name="Partition Resize",
-        description="Models grow/shrink dependencies but has no executable adapter in this increment.",
-        objective="Represent filesystem-aware partition resize safely before future implementation.",
+        description=(
+            "Models grow/shrink dependencies but has no executable adapter in this increment."
+        ),
+        objective=(
+            "Represent filesystem-aware partition resize safely before future implementation."
+        ),
         risk=RiskLevel.HIGH,
         enabled=False,
         disabled_reason="Filesystem-aware grow/shrink recovery policy is not implemented.",

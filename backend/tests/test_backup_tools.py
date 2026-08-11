@@ -117,7 +117,7 @@ def test_plan_rejects_missing_paths(tmp_path: Path, missing: str) -> None:
     target = source if missing == "source" else destination
     target.rmdir()
 
-    with pytest.raises(BackupToolError, match="BACKUP_(SOURCE|DESTINATION)_INVALID"):
+    with pytest.raises(BackupToolError, match=r"BACKUP_(SOURCE|DESTINATION)_INVALID"):
         tools.build_plan(str(source), str(destination), BackupPolicy())
 
 
@@ -298,8 +298,8 @@ async def test_cancellation_removes_partial_backup(tmp_path: Path) -> None:
         await task
 
     ares_root = destination / "ARES"
-    assert not Path(plan.destination.backup_path).exists()
-    assert not (ares_root / f".partial-{plan.backup_id}").exists()
+    assert not await asyncio.to_thread(Path(plan.destination.backup_path).exists)
+    assert not await asyncio.to_thread((ares_root / f".partial-{plan.backup_id}").exists)
 
 
 def test_revalidate_detects_source_change_and_existing_destination(tmp_path: Path) -> None:

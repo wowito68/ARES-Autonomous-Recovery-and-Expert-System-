@@ -238,7 +238,10 @@ class BackupVerifyCapability:
         version="1.0.0",
         name="Verify Backup",
         description="Recalcula integridad de un backup existente contra su manifest SHA-256.",
-        objective="Detectar corrupción, entradas ausentes o cambios de integridad sin modificar el backup.",
+        objective=(
+            "Detectar corrupción, entradas ausentes o cambios de integridad "
+            "sin modificar el backup."
+        ),
         category=CapabilityCategory.BACKUP,
         operation=OperationClass.OBSERVE,
         mode=CapabilityMode.READ_ONLY,

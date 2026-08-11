@@ -109,7 +109,10 @@ class LocalTestStorageExecutor:
             evidence_sha256=evidence,
             limitations=(
                 "Checkpoint protects partition-table metadata; it is not a filesystem/data backup.",
-                "Create/delete are executable only when DataImpactAssessment allows table-only recovery.",
+                (
+                    "Create/delete are executable only when DataImpactAssessment allows "
+                    "table-only recovery."
+                ),
             ),
         )
         return StorageCheckpointBundle(checkpoint=checkpoint, artifact=artifact)
@@ -302,7 +305,9 @@ def _grant_matches(
     )
 
 
-def _validate(model: type[ModelT], payload: dict[str, object], code: str) -> ModelT:
+def _validate[ModelT: BaseModel](
+    model: type[ModelT], payload: dict[str, object], code: str
+) -> ModelT:
     try:
         return model.model_validate(payload)
     except ValueError as exc:

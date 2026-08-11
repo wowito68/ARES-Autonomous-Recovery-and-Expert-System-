@@ -6,7 +6,7 @@ import asyncio
 from contextlib import suppress
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 from ares.audit import AuditLedger, AuditLedgerError
 from ares.capabilities import CapabilityManager
@@ -18,7 +18,6 @@ from ares.storage_operations.engine import (
     StorageOperationEngineError,
 )
 from ares.storage_operations.models import (
-    StorageAuthorizationGrant,
     StorageLayout,
     StorageOperationExecutionInput,
     StorageOperationPlan,
