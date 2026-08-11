@@ -61,16 +61,20 @@ jobs:
           cd ..
           node --check live/config/includes.chroot/usr/share/ares/platform/partition.js
 
-      - name: Remove staging artifacts and commit implementation
+      - name: Commit implementation without workflow mutations
         shell: bash
         run: |
           set -euo pipefail
           rm -f scripts/storage_bundle.b64.00 scripts/storage_bundle.b64.01 scripts/storage_bundle.b64.02 scripts/storage_bundle.b64.03 scripts/storage_bundle.b64.04 scripts/storage_bundle.b64.05 scripts/storage_bundle.b64.06 scripts/storage_bundle.b64.07
           rm -f scripts/storage_bundle.b64.rest scripts/storage_patch.b64 scripts/storage_increment_apply.py
-          rm -f .github/workflows/storage-increment-apply.yml
+          git restore --source=HEAD -- .github/workflows/backend-ci.yml .github/workflows/storage-increment-apply.yml
           git config user.name 'ARES storage integrator'
           git config user.email 'ares-storage-integrator@users.noreply.github.com'
           git add -A
           git diff --cached --check
+          if git diff --cached --name-only | grep -q '^\.github/workflows/'; then
+            echo 'Refusing workflow mutation from integration token' >&2
+            exit 1
+          fi
           git commit -m 'Implement Storage & Partition Management [storage-integrated]'
           git push origin HEAD:agent/storage-partition-management
