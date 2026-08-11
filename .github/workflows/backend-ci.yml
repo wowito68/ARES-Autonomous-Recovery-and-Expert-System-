@@ -32,19 +32,10 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --frozen --dev
 
-      - name: Produce Ruff-formatted diagnostic copy
-        run: |
-          uv run --frozen ruff format src tests
-          tar -czf /tmp/ruff-formatted.tgz src tests
+      - name: Enforce Ruff formatting
+        run: uv run --frozen ruff format --check src tests
 
-      - name: Upload formatted diagnostic copy
-        uses: actions/upload-artifact@v4
-        with:
-          name: ruff-formatted-${{ github.sha }}
-          path: /tmp/ruff-formatted.tgz
-          retention-days: 1
-
-      - name: Enforce Ruff
+      - name: Enforce Ruff lint
         run: uv run --frozen ruff check src tests
 
       - name: Enforce strict mypy
@@ -132,3 +123,6 @@ jobs:
         run: |
           node --check live/config/includes.chroot/usr/share/ares/platform/app.js
           node --check live/config/includes.chroot/usr/share/ares/platform/storage.js
+          node --check live/config/includes.chroot/usr/share/ares/platform/backup.js
+          node --check live/config/includes.chroot/usr/share/ares/platform/filesystem.js
+          node --check live/config/includes.chroot/usr/share/ares/platform/partition.js
