@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import json
+import shutil
 from pathlib import Path
 from typing import Literal
 
@@ -245,12 +245,14 @@ def _create_plan(identity: StorageDeviceIdentity) -> StorageOperationPlan:
     return draft.model_copy(update={"fingerprint_sha256": storage_plan_fingerprint(draft)})
 
 
-def test_identity_rejects_unsafe_missing_symlink_and_outside_controlled_root(tmp_path: Path) -> None:
+def test_identity_rejects_unsafe_missing_symlink_and_outside_controlled_root(
+    tmp_path: Path,
+) -> None:
     identity = DiskIdentityTool()
     with pytest.raises(PartitionToolError, match="STORAGE_TARGET_INVALID"):
         identity.identify("relative.img")
     with pytest.raises(PartitionToolError, match="STORAGE_TARGET_INVALID"):
-        identity.identify("/tmp/bad\x00name")
+        identity.identify(str(tmp_path / "bad") + "\x00name")
     with pytest.raises(PartitionToolError, match="STORAGE_TARGET_NOT_FOUND"):
         identity.identify(str(tmp_path / "missing.img"))
 
@@ -318,7 +320,9 @@ def test_write_gate_covers_image_loop_and_physical_policies(tmp_path: Path) -> N
 def test_data_and_boot_impact_cover_all_blocking_dependencies() -> None:
     identity = _identity()
     fs = FilesystemResource(id="filesystem:1", device_path="image:test:1", filesystem_type="ext4")
-    mount = MountPointResource(id="mount:1", source="image:test:1", path="/", filesystem_type="ext4")
+    mount = MountPointResource(
+        id="mount:1", source="image:test:1", path="/", filesystem_type="ext4"
+    )
     lvm = VolumeResource(id="volume:lvm", kind=VolumeKind.LVM_PV, name="pv")
     raid = VolumeResource(id="volume:raid", kind=VolumeKind.MDRAID, name="md")
     target = _partition(
@@ -362,7 +366,9 @@ def test_data_and_boot_impact_cover_all_blocking_dependencies() -> None:
     assert critical.level.value == "CRITICAL" and critical.affected_dependencies == (boot.id,)
     recovery = target.model_copy(update={"role": PartitionRole.RECOVERY})
     no_boot = _layout(identity, (recovery,))
-    assert analyze_boot_impact(StorageOperationType.DELETE, no_boot, recovery).level.value == "LIKELY"
+    assert (
+        analyze_boot_impact(StorageOperationType.DELETE, no_boot, recovery).level.value == "LIKELY"
+    )
     normal = target.model_copy(
         update={
             "role": PartitionRole.NORMAL,
@@ -508,9 +514,7 @@ def test_layout_helpers_free_regions_and_dependency_tools() -> None:
     proposed = layout_with_table(_layout(identity), combined)
     assert proposed.warnings
 
-    mount = MountPointResource(
-        id="mount:x", source="/dev/x", path="/mnt", filesystem_type="ext4"
-    )
+    mount = MountPointResource(id="mount:x", source="/dev/x", path="/mnt", filesystem_type="ext4")
     deps_layout = proposed.model_copy(update={"mount_points": (mount,), "swap_partitions": (3,)})
     assert MountDependencyTool().inspect(deps_layout) == ("/mnt", "swap:3")
     dependency = BootDependency(id="boot:x", kind="root", reason="root", critical=True)
@@ -540,9 +544,7 @@ async def test_partition_table_tool_error_paths_dump_and_probe(tmp_path: Path) -
         await table_tool.inspect(str(image))
 
     expected = identity_tool.identify(str(image))
-    runner.results["sfdisk"] = [
-        _result("sfdisk", code=1, stderr="unrecognized partition table")
-    ]
+    runner.results["sfdisk"] = [_result("sfdisk", code=1, stderr="unrecognized partition table")]
     assert await table_tool.dump(expected) == ""
     runner.results["sfdisk"] = [_result("sfdisk", code=1, stderr="bad io")]
     with pytest.raises(PartitionToolError, match="STORAGE_PARTITION_TABLE_DUMP_FAILED"):
@@ -565,9 +567,7 @@ async def test_partition_table_tool_error_paths_dump_and_probe(tmp_path: Path) -
         type_code=None,
         name="P1",
     )
-    runner.results["blkid"] = [
-        _result("blkid", code=0, stdout="TYPE=ext4\nUUID=test-uuid\n")
-    ]
+    runner.results["blkid"] = [_result("blkid", code=0, stdout="TYPE=ext4\nUUID=test-uuid\n")]
     probe = await table_tool._probe_partition(expected, partition)
     assert probe["TYPE"] == "ext4"
     runner.results["blkid"] = [_result("blkid", code=3, stdout="TYPE=ext4")]
@@ -590,9 +590,7 @@ async def test_enrichment_classifies_crypto_lvm_raid_swap_filesystem_and_boot(
             start_sector=2048 + (index - 1) * 8192,
             size_sectors=4096,
             sector_size=512,
-            type_code=(
-                "C12A7328-F81F-11D2-BA4B-00A0C93EC93B" if index == 6 else None
-            ),
+            type_code=("C12A7328-F81F-11D2-BA4B-00A0C93EC93B" if index == 6 else None),
             name=f"P{index}",
         )
         for index in range(1, 7)
@@ -776,6 +774,6 @@ def test_os_detection_resize_support_mount_unescape_and_numeric_helpers(tmp_path
 
 
 def test_safe_runner_reports_missing_tool(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(partition_tools.shutil, "which", lambda _: None)
+    monkeypatch.setattr(shutil, "which", lambda _: None)
     state = SafePartitionProcessRunner().inspect("definitely-missing")
     assert state.available is False and state.reason == "tool_not_installed"
