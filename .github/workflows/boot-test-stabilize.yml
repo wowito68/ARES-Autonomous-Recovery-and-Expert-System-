@@ -1,0 +1,44 @@
+name: Boot Test Stabilizer
+
+on:
+  push:
+    branches:
+      - agent/boot-recovery-management
+
+permissions:
+  contents: write
+
+jobs:
+  stabilize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/boot-recovery-management
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: 0.11.14
+          python-version: '3.12'
+          working-directory: backend
+      - name: Install locked dependencies
+        working-directory: backend
+        run: uv sync --frozen --dev
+      - name: Fix export path and format Boot tests
+        run: |
+          sed -i 's/from ares.workflows import StepOutputs, WorkflowEngine/from ares.workflows import WorkflowEngine\nfrom ares.workflows.models import StepOutputs/' backend/tests/test_boot_service_actions.py
+          cd backend
+          uv run --frozen ruff format tests/test_boot_api_cli_edges.py tests/test_boot_engine_edges.py tests/test_boot_runtime_edges.py tests/test_boot_service_actions.py
+          uv run --frozen ruff check tests/test_boot_api_cli_edges.py tests/test_boot_engine_edges.py tests/test_boot_runtime_edges.py tests/test_boot_service_actions.py
+          uv run --frozen mypy
+          uv run --frozen pytest -q --no-cov tests/test_boot_tools.py tests/test_boot_engine.py tests/test_boot_platform_integration.py tests/test_boot_api_cli_edges.py tests/test_boot_engine_edges.py tests/test_boot_runtime_edges.py tests/test_boot_service_actions.py
+      - name: Commit validated Boot tests and remove stabilizer
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/boot-test-stabilize.yml
+          git add backend/tests
+          git diff --cached --check
+          git commit -m 'Stabilize Boot coverage tests'
+          git push origin HEAD:agent/boot-recovery-management
