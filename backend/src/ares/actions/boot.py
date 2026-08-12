@@ -9,8 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from ares.actions.base import ActionContext, ActionError
 from ares.boot.engine import BootRecoveryEngine, BootRecoveryEngineError
 from ares.boot.models import (
-    BootDiagnosticResult,
     BootDiagnoseInput,
+    BootDiagnosticResult,
     BootRepairRecord,
     BootVerificationStatus,
 )
@@ -146,9 +146,7 @@ class ProjectBootDiagnosisGraphAction:
                     "grub_config": environment.configuration.grub_config_path,
                     "kernel_count": len(environment.configuration.kernels),
                     "initramfs_count": len(environment.configuration.initramfs),
-                    "invalid_fstab_count": len(
-                        environment.configuration.invalid_fstab_references
-                    ),
+                    "invalid_fstab_count": len(environment.configuration.invalid_fstab_references),
                 },
             )
         )

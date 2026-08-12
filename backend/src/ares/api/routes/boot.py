@@ -6,7 +6,12 @@ from typing import cast
 
 from fastapi import APIRouter, Request, status
 
-from ares.boot.models import BootDiagnosticResult, BootRepairPlan, BootRepairRecord, BootVerification
+from ares.boot.models import (
+    BootDiagnosticResult,
+    BootRepairPlan,
+    BootRepairRecord,
+    BootVerification,
+)
 from ares.boot.service import (
     BootDiagnoseRequest,
     BootRecoveryService,

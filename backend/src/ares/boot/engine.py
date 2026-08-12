@@ -12,14 +12,16 @@ from ares.boot.models import (
     BootAuthorizationGrant,
     BootConfiguration,
     BootDependency,
-    BootDiagnosticResult,
     BootDiagnoseInput,
+    BootDiagnosticResult,
     BootEntry,
     BootEnvironment,
     BootEvidence,
     BootIssue,
     BootIssueCode,
     BootIssueSeverity,
+    Bootloader,
+    BootloaderKind,
     BootOperationKind,
     BootPartition,
     BootRepairExecution,
@@ -31,8 +33,6 @@ from ares.boot.models import (
     BootVerification,
     BootVerificationStatus,
     BootVerificationStrategy,
-    Bootloader,
-    BootloaderKind,
     DistributionFamily,
     FirmwareMode,
 )
@@ -118,7 +118,9 @@ class BootRecoveryEngine:
             selected_config, fstab_evidence = self.tools.fstab.inspect(selected_config, layout)
         else:
             fstab_evidence = ()
-        root_partition = _root_partition(layout, operating_systems[0] if operating_systems else None)
+        root_partition = _root_partition(
+            layout, operating_systems[0] if operating_systems else None
+        )
         boot_partition = _boot_partition(layout)
         all_evidence = (*firmware_evidence, *efi_evidence, *selected_evidence, *fstab_evidence)
         issues = _issues(
@@ -203,7 +205,7 @@ class BootRecoveryEngine:
             level=BootImpactLevel.LIKELY,
             affected_dependencies=affected,
             reasons=("bootloader_configuration_will_change",),
-            recovery_required=True,
+            recovery_strategy_available=True,
             executable=executable,
         )
         draft = BootRepairPlan(
@@ -388,9 +390,7 @@ class BootRecoveryEngine:
         )
         return verification
 
-    async def reconcile_unknown(
-        self, repair_id: str, *, session_id: str
-    ) -> BootVerification:
+    async def reconcile_unknown(self, repair_id: str, *, session_id: str) -> BootVerification:
         record = await self.store.get_record(repair_id)
         if record is None:
             raise BootRecoveryEngineError("BOOT_REPAIR_NOT_FOUND")
@@ -452,7 +452,9 @@ class BootRecoveryEngine:
                     "reconciliation_required": uncertain,
                     "error_code": code,
                     "finished_at": None if uncertain else datetime.now(UTC),
-                    "last_known_stage": "boot-repair-unknown" if uncertain else "boot-repair-failed",
+                    "last_known_stage": (
+                        "boot-repair-unknown" if uncertain else "boot-repair-failed"
+                    ),
                 }
             )
         )
@@ -524,7 +526,9 @@ def _issues(
             BootIssue(
                 code=BootIssueCode.MULTIPLE_LINUX_INSTALLATIONS,
                 severity=BootIssueSeverity.HIGH,
-                summary="Multiple Linux installations were detected; a repair target must be selected.",
+                summary=(
+                    "Multiple Linux installations were detected; a repair target must be selected."
+                ),
                 evidence_ids=ids,
                 confidence=0.95,
                 recommended_action="Select the Linux installation that should be recovered.",
@@ -547,7 +551,9 @@ def _issues(
             BootIssue(
                 code=BootIssueCode.WINDOWS_BOOT_REPAIR_UNSUPPORTED,
                 severity=BootIssueSeverity.MEDIUM,
-                summary="Windows Boot Manager was detected; automatic Windows boot repair is disabled.",
+                summary=(
+                    "Windows Boot Manager was detected; automatic Windows boot repair is disabled."
+                ),
                 evidence_ids=ids,
                 confidence=0.95,
                 recommended_action="Use Windows recovery tooling or perform a manual review.",
@@ -558,7 +564,9 @@ def _issues(
             BootIssue(
                 code=BootIssueCode.UNSUPPORTED_BOOTLOADER,
                 severity=BootIssueSeverity.MEDIUM,
-                summary="systemd-boot was detected; automatic repair is not enabled in this version.",
+                summary=(
+                    "systemd-boot was detected; automatic repair is not enabled in this version."
+                ),
                 evidence_ids=ids,
                 confidence=0.95,
                 recommended_action="Perform manual recovery or use a future systemd-boot adapter.",
@@ -572,7 +580,9 @@ def _issues(
                 summary="The selected Linux installation has no detected kernel image under /boot.",
                 evidence_ids=ids,
                 confidence=0.93,
-                recommended_action="Restore or reinstall a kernel before relying on bootloader repair.",
+                recommended_action=(
+                    "Restore or reinstall a kernel before relying on bootloader repair."
+                ),
             )
         )
     if configuration.kernels and not configuration.initramfs:
@@ -611,7 +621,9 @@ def _issues(
                 summary="fstab contains invalid, missing, or duplicate storage references.",
                 evidence_ids=ids,
                 confidence=0.93,
-                recommended_action="Manual fstab review is required; ARES will not edit fstab automatically.",
+                recommended_action=(
+                    "Manual fstab review is required; ARES will not edit fstab automatically."
+                ),
             )
         )
     if firmware is FirmwareMode.UEFI and esp is None:
@@ -619,7 +631,9 @@ def _issues(
             BootIssue(
                 code=BootIssueCode.ESP_NOT_MOUNTED,
                 severity=BootIssueSeverity.HIGH,
-                summary="The system is running in UEFI mode but no EFI System Partition was identified.",
+                summary=(
+                    "The system is running in UEFI mode but no EFI System Partition was identified."
+                ),
                 evidence_ids=ids,
                 confidence=0.86,
                 recommended_action="Identify and mount the correct ESP before GRUB repair.",
@@ -637,7 +651,9 @@ def _issues(
             BootIssue(
                 code=BootIssueCode.EFI_ENTRY_MISSING,
                 severity=BootIssueSeverity.HIGH,
-                summary="GRUB EFI loader files exist, but no matching firmware boot entry was found.",
+                summary=(
+                    "GRUB EFI loader files exist, but no matching firmware boot entry was found."
+                ),
                 evidence_ids=ids,
                 confidence=0.94,
                 recommended_action="Create the GRUB EFI entry and verify the loader path.",
@@ -653,7 +669,9 @@ def _repair_operations(diagnostic: BootDiagnosticResult) -> tuple[BootRepairOper
         BootRepairOperation(
             id="boot.checkpoint",
             kind=BootOperationKind.CREATE_CHECKPOINT,
-            description="Create a verified snapshot of relevant EFI, GRUB and boot configuration state.",
+            description=(
+                "Create a verified snapshot of relevant EFI, GRUB and boot configuration state."
+            ),
             mutates_system=False,
         ),
         BootRepairOperation(
@@ -674,7 +692,9 @@ def _repair_operations(diagnostic: BootDiagnosticResult) -> tuple[BootRepairOper
                 BootRepairOperation(
                     id="boot.grub.install",
                     kind=BootOperationKind.INSTALL_GRUB,
-                    description="Install or reinstall GRUB for the approved target OS and firmware mode.",
+                    description=(
+                        "Install or reinstall GRUB for the approved target OS and firmware mode."
+                    ),
                     mutates_system=True,
                 ),
                 BootRepairOperation(
@@ -708,7 +728,9 @@ def _repair_operations(diagnostic: BootDiagnosticResult) -> tuple[BootRepairOper
             BootRepairOperation(
                 id="boot.verify",
                 kind=BootOperationKind.VERIFY_BOOT_CHAIN,
-                description="Verify firmware, ESP, bootloader, config, kernel, initramfs and root chain.",
+                description=(
+                    "Verify firmware, ESP, bootloader, config, kernel, initramfs and root chain."
+                ),
                 mutates_system=False,
             ),
             BootRepairOperation(
@@ -879,7 +901,9 @@ def _max_severity(issues: tuple[BootIssue, ...]) -> BootIssueSeverity:
         BootIssueSeverity.HIGH: 3,
         BootIssueSeverity.CRITICAL: 4,
     }
-    return max(issues, key=lambda item: order[item.severity]).severity if issues else BootIssueSeverity.INFO
+    if not issues:
+        return BootIssueSeverity.INFO
+    return max(issues, key=lambda item: order[item.severity]).severity
 
 
 def _diagnostic_confidence(
@@ -895,7 +919,10 @@ def _recommended_action(
     if len(operating_systems) > 1:
         return "Select which Linux installation should be recovered before creating a repair plan."
     if any(item.repairable_automatically for item in issues):
-        return "Create a minimal BootRepairPlan, protect current boot state, then request authorization."
+        return (
+            "Create a minimal BootRepairPlan, protect current boot state, "
+            "then request authorization."
+        )
     if issues:
         return issues[0].recommended_action
     return "No repair should be attempted without additional evidence of a boot-chain fault."

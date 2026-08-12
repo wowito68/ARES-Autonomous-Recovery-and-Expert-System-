@@ -63,9 +63,7 @@ class LocalTestBootExecutor:
 
     async def create_checkpoint(self, plan: BootRepairPlan) -> BootCheckpointBundle:
         try:
-            entries, efi_entries = await _checkpoint_state(
-                plan, self.tools, self.checkpoint_root
-            )
+            entries, efi_entries = await _checkpoint_state(plan, self.tools, self.checkpoint_root)
         except BootToolError as exc:
             raise BootExecutorError(exc.code) from exc
         checkpoint_id = uuid4().hex
@@ -227,9 +225,7 @@ class UnixBrokerBootExecutor:
         )
         return BootVerification.model_validate(payload)
 
-    async def _request(
-        self, request: dict[str, Any], on_stage: StageCallback
-    ) -> dict[str, Any]:
+    async def _request(self, request: dict[str, Any], on_stage: StageCallback) -> dict[str, Any]:
         encoded = (json.dumps(request, separators=(",", ":")) + "\n").encode("utf-8")
         if len(encoded) > _MAX_REQUEST:
             raise BootExecutorError("BOOT_BROKER_REQUEST_TOO_LARGE")
@@ -274,12 +270,13 @@ class UnixBrokerBootExecutor:
                     continue
                 if kind == "error":
                     code = message.get("code")
-                    raise BootExecutorError(
-                        code if isinstance(code, str) else "BOOT_BROKER_FAILED"
-                    )
-                if kind != "result" or not isinstance(message.get("payload"), dict):
+                    raise BootExecutorError(code if isinstance(code, str) else "BOOT_BROKER_FAILED")
+                result_payload = message.get("payload")
+                if kind != "result" or not isinstance(result_payload, dict):
                     raise BootExecutorError("BOOT_BROKER_RESPONSE_INVALID")
-                return message["payload"]
+                if not all(isinstance(key, str) for key in result_payload):
+                    raise BootExecutorError("BOOT_BROKER_RESPONSE_INVALID")
+                return {str(key): value for key, value in result_payload.items()}
         finally:
             writer.close()
             await writer.wait_closed()

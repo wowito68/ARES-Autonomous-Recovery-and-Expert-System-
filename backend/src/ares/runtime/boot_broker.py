@@ -25,7 +25,11 @@ from ares.boot.models import (
     BootRepairPlan,
 )
 from ares.boot.store import BootRecoveryStore
-from ares.protection import ProtectionCheckpoint, ProtectionCheckpointStatus, ProtectionCheckpointStore
+from ares.protection import (
+    ProtectionCheckpoint,
+    ProtectionCheckpointStatus,
+    ProtectionCheckpointStore,
+)
 from ares.tools.boot import BootRepairToolSuite, BootToolError, checkpoint_evidence_hash, hash_file
 from ares.tools.partition import DiskIdentityTool
 
@@ -332,9 +336,7 @@ class BootBroker:
     async def _validate_plan(self, plan: BootRepairPlan, *, checkpoint_required: bool) -> None:
         if not boot_plan_integrity_valid(plan) or plan.expires_at <= datetime.now(UTC):
             raise BootToolError("BOOT_REPAIR_PLAN_INVALID")
-        current = await asyncio.to_thread(
-            self.identity.identify, plan.target_disk.requested_path
-        )
+        current = await asyncio.to_thread(self.identity.identify, plan.target_disk.requested_path)
         if current.fingerprint_sha256 != plan.target_disk.fingerprint_sha256:
             raise BootToolError("BOOT_DEVICE_IDENTITY_CHANGED")
         if checkpoint_required:

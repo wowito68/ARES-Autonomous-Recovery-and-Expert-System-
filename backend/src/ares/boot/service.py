@@ -12,8 +12,8 @@ from ares.actions.boot import BootRepairExecutionInput
 from ares.audit import AuditLedger, AuditLedgerError
 from ares.boot.engine import BootRecoveryEngine, BootRecoveryEngineError
 from ares.boot.models import (
-    BootDiagnosticResult,
     BootDiagnoseInput,
+    BootDiagnosticResult,
     BootRepairPlan,
     BootRepairPlanInput,
     BootRepairRecord,
@@ -87,9 +87,7 @@ class BootRecoveryService:
         except ValueError as exc:
             raise BootRecoveryServiceError("BOOT_DIAGNOSTIC_RESULT_INVALID") from exc
 
-    async def plan(
-        self, request: BootRepairPlanRequest, *, session_id: str
-    ) -> BootRepairPlan:
+    async def plan(self, request: BootRepairPlanRequest, *, session_id: str) -> BootRepairPlan:
         try:
             plan = await self.engine.plan(
                 BootRepairPlanInput(
@@ -167,9 +165,7 @@ class BootRecoveryService:
         )
         workflow_id = uuid4().hex
         task = asyncio.create_task(
-            self._authorize_and_run(
-                protected.repair_id, protected.id, session_id, workflow_id
-            ),
+            self._authorize_and_run(protected.repair_id, protected.id, session_id, workflow_id),
             name=f"boot-repair-{protected.repair_id}",
         )
         async with self._lock:
@@ -246,6 +242,7 @@ class BootRecoveryService:
         workflow_id: str,
     ) -> None:
         try:
+
             async def challenge(challenge_id: str) -> None:
                 await self.event_bus.publish(
                     AresEvent(
@@ -266,9 +263,9 @@ class BootRecoveryService:
                 raise BootRecoveryServiceError("BOOT_REPAIR_NOT_FOUND")
             execution = await self.capabilities.execute(
                 "boot.repair.grub",
-                BootRepairExecutionInput(
-                    repair_id=repair_id, session_id=session_id
-                ).model_dump(mode="json"),
+                BootRepairExecutionInput(repair_id=repair_id, session_id=session_id).model_dump(
+                    mode="json"
+                ),
                 execution_id=workflow_id,
                 protection_checkpoint=record.plan.protection_checkpoint,
             )

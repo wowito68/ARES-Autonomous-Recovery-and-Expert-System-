@@ -8,14 +8,15 @@ import pytest
 from ares.boot.integrity import boot_plan_fingerprint
 from ares.boot.models import (
     BootConfiguration,
+    Bootloader,
+    BootloaderKind,
+    BootOperationKind,
     BootPartition,
     BootRepairOperation,
     BootRepairPlan,
     BootTargetOS,
     BootVerificationConfidence,
     BootVerificationStatus,
-    Bootloader,
-    BootloaderKind,
     DistributionFamily,
     FirmwareMode,
 )
@@ -38,7 +39,13 @@ class _Result:
 
 
 class _Runner:
-    available_tools: ClassVar[set[str]] = {"efibootmgr", "mount", "umount", "grub-install", "chroot"}
+    available_tools: ClassVar[set[str]] = {
+        "efibootmgr",
+        "mount",
+        "umount",
+        "grub-install",
+        "chroot",
+    }
 
     def __init__(self) -> None:
         self.entries = "BootCurrent: 0001\n"
@@ -140,7 +147,7 @@ def _plan(root: Path, esp: Path | None = None) -> BootRepairPlan:
         operations=(
             BootRepairOperation(
                 id="install",
-                kind="INSTALL_GRUB",
+                kind=BootOperationKind.INSTALL_GRUB,
                 description="Install GRUB fixture",
                 mutates_system=True,
             ),
@@ -149,7 +156,7 @@ def _plan(root: Path, esp: Path | None = None) -> BootRepairPlan:
             level=BootImpactLevel.LIKELY,
             affected_dependencies=(),
             reasons=("fixture",),
-            recovery_required=True,
+            recovery_strategy_available=True,
             executable=True,
         ),
         executable=True,

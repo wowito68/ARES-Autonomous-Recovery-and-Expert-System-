@@ -14,6 +14,8 @@ from ares.boot.models import (
     BootIssue,
     BootIssueCode,
     BootIssueSeverity,
+    Bootloader,
+    BootloaderKind,
     BootPartition,
     BootRepairExecution,
     BootRepairPlanInput,
@@ -21,8 +23,6 @@ from ares.boot.models import (
     BootTargetOS,
     BootVerificationConfidence,
     BootVerificationStatus,
-    Bootloader,
-    BootloaderKind,
     DistributionFamily,
     FirmwareEnvironment,
     FirmwareMode,
@@ -32,7 +32,7 @@ from ares.protection import ProtectionCheckpointStore
 from ares.storage_operations import StorageOperationEngine
 from ares.storage_operations.models import StorageLayout
 from ares.tools.boot import BootRepairToolSuite
-from tests.test_boot_tools import _Runner, _root
+from tests.test_boot_tools import _root, _Runner
 from tests.test_storage_partition_edges import _identity
 
 
@@ -252,9 +252,7 @@ async def test_boot_store_reconciles_interrupted_and_authorized_states(tmp_path:
     )
     execution = await store.get_execution(plan.repair_id)
     assert execution is not None
-    await store.put_execution(
-        execution.model_copy(update={"status": BootRepairStatus.EXECUTING})
-    )
+    await store.put_execution(execution.model_copy(update={"status": BootRepairStatus.EXECUTING}))
     store.prepare()
     recovered = await store.get_execution(plan.repair_id)
     assert recovered is not None

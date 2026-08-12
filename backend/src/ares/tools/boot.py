@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import shutil
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from pathlib import Path
 from typing import Protocol
 
@@ -14,14 +15,13 @@ from ares.boot.models import (
     BootConfiguration,
     BootEntry,
     BootEvidence,
-    BootPartition,
+    Bootloader,
+    BootloaderKind,
     BootRepairPlan,
     BootTargetOS,
     BootVerification,
     BootVerificationConfidence,
     BootVerificationStatus,
-    Bootloader,
-    BootloaderKind,
     DistributionFamily,
     FirmwareEnvironment,
     FirmwareMode,
@@ -92,7 +92,9 @@ class SafeBootProcessRunner:
         process = await asyncio.create_subprocess_exec(
             executable,
             *args,
-            stdin=asyncio.subprocess.PIPE if input_bytes is not None else asyncio.subprocess.DEVNULL,
+            stdin=(
+                asyncio.subprocess.PIPE if input_bytes is not None else asyncio.subprocess.DEVNULL
+            ),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd="/",
@@ -299,7 +301,9 @@ class BootloaderDetectionTool:
                     if value is not None
                 ),
                 efi_loader_paths=efi_paths,
-                repair_supported=kind is BootloaderKind.GRUB and family is DistributionFamily.DEBIAN,
+                repair_supported=(
+                    kind is BootloaderKind.GRUB and family is DistributionFamily.DEBIAN
+                ),
                 evidence_ids=tuple(item.id for item in evidence),
             ),
             configuration,
@@ -426,10 +430,8 @@ class RepairEnvironmentTool:
     async def cleanup(self, environment: RepairEnvironment) -> RepairEnvironment:
         if not self.test_mode:
             await self.cleanup_paths(tuple(reversed(environment.bind_mounts)))
-        try:
-            Path(environment.work_root).rmdir()
-        except OSError:
-            pass
+        with suppress(OSError):
+            await asyncio.to_thread(Path(environment.work_root).rmdir)
         return environment.model_copy(update={"cleaned": True})
 
     async def cleanup_paths(self, paths: tuple[str, ...]) -> None:
@@ -469,6 +471,7 @@ class GrubAdapter:
         if not self.runner.available("grub-install"):
             raise BootToolError("GRUB_INSTALL_UNAVAILABLE")
         boot_directory = environment.boot_path or str(root / "boot")
+        args: tuple[str, ...]
         if plan.target_esp is not None:
             if environment.esp_path is None:
                 raise BootToolError("BOOT_ESP_PATH_UNAVAILABLE")
@@ -489,9 +492,7 @@ class GrubAdapter:
         if result.exit_code != 0:
             raise BootToolError("GRUB_INSTALL_FAILED")
 
-    async def regenerate_config(
-        self, plan: BootRepairPlan, environment: RepairEnvironment
-    ) -> None:
+    async def regenerate_config(self, plan: BootRepairPlan, environment: RepairEnvironment) -> None:
         del plan
         root = _safe_root(Path(environment.root_path))
         if self.test_mode:
@@ -557,8 +558,7 @@ class BootVerificationTool:
             else:
                 efi_loader_ok = False
             efi_entry_ok = any(
-                "grub" in item.label.lower() or "debian" in item.label.lower()
-                for item in entries
+                "grub" in item.label.lower() or "debian" in item.label.lower() for item in entries
             )
         bootloader_ok = grub_config.is_file() and grub_config.stat().st_size > 0
         kernel_ok = bool(kernels)
@@ -567,9 +567,7 @@ class BootVerificationTool:
         static_ok = bootloader_ok and kernel_ok and initramfs_ok and root_ok
         if plan.target_esp is not None:
             static_ok = static_ok and bool(efi_loader_ok)
-        status = (
-            BootVerificationStatus.PARTIAL if static_ok else BootVerificationStatus.FAILED
-        )
+        status = BootVerificationStatus.PARTIAL if static_ok else BootVerificationStatus.FAILED
         message = (
             "Boot-chain artifacts are internally consistent, but an offline repair cannot prove "
             "that firmware will complete a real reboot."

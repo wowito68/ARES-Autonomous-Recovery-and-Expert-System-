@@ -288,7 +288,9 @@ class BootRepairPlan(BaseModel):
     risk: Literal["high", "critical"] = "high"
     protection_checkpoint: ProtectionCheckpoint | None = None
     authorization_required: Literal[True] = True
-    verification_strategy: BootVerificationStrategy = Field(default_factory=BootVerificationStrategy)
+    verification_strategy: BootVerificationStrategy = Field(
+        default_factory=BootVerificationStrategy
+    )
     executable: bool = False
     limitations: tuple[str, ...] = ()
     fingerprint_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")

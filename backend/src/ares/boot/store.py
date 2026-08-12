@@ -63,19 +63,13 @@ class BootRecoveryStore:
         self._write(self.executions / f"{_safe_id(execution.repair_id)}.json", execution)
 
     async def get_execution(self, repair_id: str) -> BootRepairExecution | None:
-        return self._read(
-            self.executions / f"{_safe_id(repair_id)}.json", BootRepairExecution
-        )
+        return self._read(self.executions / f"{_safe_id(repair_id)}.json", BootRepairExecution)
 
     async def put_verification(self, verification: BootVerification) -> None:
-        self._write(
-            self.verifications / f"{_safe_id(verification.repair_id)}.json", verification
-        )
+        self._write(self.verifications / f"{_safe_id(verification.repair_id)}.json", verification)
 
     async def get_verification(self, repair_id: str) -> BootVerification | None:
-        return self._read(
-            self.verifications / f"{_safe_id(repair_id)}.json", BootVerification
-        )
+        return self._read(self.verifications / f"{_safe_id(repair_id)}.json", BootVerification)
 
     async def put_checkpoint(self, artifact: BootCheckpointArtifact) -> None:
         self._write(self.checkpoints / f"{_safe_id(artifact.checkpoint_id)}.json", artifact)

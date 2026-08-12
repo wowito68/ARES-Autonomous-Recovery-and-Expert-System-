@@ -13,7 +13,7 @@ from ares.actions.boot import (
     ProjectBootRepairGraphAction,
 )
 from ares.boot.engine import BootRecoveryEngine
-from ares.boot.models import BootDiagnosticResult, BootDiagnoseInput, BootRepairRecord
+from ares.boot.models import BootDiagnoseInput, BootDiagnosticResult, BootRepairRecord
 from ares.capabilities.base import Capability
 from ares.capabilities.models import (
     AuditPolicy,
@@ -35,7 +35,9 @@ _COMPATIBILITY = OSCompatibility(
 _PERMISSIONS = (
     PermissionRequirement(
         id="boot.observe",
-        reason="Inspect firmware, EFI, boot files and boot configuration without persistent mutation.",
+        reason=(
+            "Inspect firmware, EFI, boot files and boot configuration without persistent mutation."
+        ),
     ),
     PermissionRequirement(
         id="boot.repair-via-broker",
@@ -43,7 +45,9 @@ _PERMISSIONS = (
     ),
     PermissionRequirement(
         id="boot.state.write-local",
-        reason="Persist boot diagnostics, plans, checkpoints, executions and verification evidence.",
+        reason=(
+            "Persist boot diagnostics, plans, checkpoints, executions and verification evidence."
+        ),
     ),
     PermissionRequirement(
         id="knowledge.graph.write",
