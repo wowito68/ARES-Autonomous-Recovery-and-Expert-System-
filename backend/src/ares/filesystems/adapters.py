@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, cast
 
 from ares.filesystems.models import (
     FilesystemCheckResult,
@@ -56,7 +56,10 @@ class ExtFilesystemAdapter:
         supports_rollback=False,
         repair_supported=True,
         limitations=(
-            "ARES usa e2fsck -p: solo corrige problemas que e2fsck considera seguros para reparación automática.",
+            (
+                "ARES usa e2fsck -p: solo corrige problemas que e2fsck considera "
+                "seguros para reparación automática."
+            ),
             "No se implementa e2undo ni reparación interactiva en esta versión.",
         ),
     )
@@ -117,7 +120,10 @@ class XfsFilesystemAdapter:
         supports_rollback=False,
         repair_supported=True,
         limitations=(
-            "ARES no usa xfs_repair -L; un dirty log que requiera borrado bloquea la reparación automática.",
+            (
+                "ARES no usa xfs_repair -L; un dirty log que requiera borrado "
+                "bloquea la reparación automática."
+            ),
             "xfs_repair -n no detecta todas las inconsistencias posibles.",
         ),
     )
@@ -177,7 +183,10 @@ class BtrfsFilesystemAdapter:
         supports_rollback=False,
         repair_supported=False,
         limitations=(
-            "btrfs check --repair no se automatiza: la documentación upstream exige criterio experto y puede agravar corrupción.",
+            (
+                "btrfs check --repair no se automatiza: la documentación upstream "
+                "exige criterio experto y puede agravar corrupción."
+            ),
             "ARES limita Btrfs 1.0 a inspección estructural read-only.",
         ),
     )
@@ -231,7 +240,10 @@ class NtfsFilesystemAdapter:
         supports_rollback=False,
         repair_supported=True,
         limitations=(
-            "ntfsfix solo corrige inconsistencias NTFS fundamentales y solicita comprobación posterior de Windows.",
+            (
+                "ntfsfix solo corrige inconsistencias NTFS fundamentales y solicita "
+                "comprobación posterior de Windows."
+            ),
             "Un exit code exitoso de ntfsfix no equivale a una verificación completa de CHKDSK.",
         ),
     )
@@ -275,11 +287,14 @@ class NtfsFilesystemAdapter:
         return False
 
 
-_ADAPTERS: tuple[FilesystemAdapter, ...] = (
-    ExtFilesystemAdapter(),
-    XfsFilesystemAdapter(),
-    BtrfsFilesystemAdapter(),
-    NtfsFilesystemAdapter(),
+_ADAPTERS = cast(
+    tuple[FilesystemAdapter, ...],
+    (
+        ExtFilesystemAdapter(),
+        XfsFilesystemAdapter(),
+        BtrfsFilesystemAdapter(),
+        NtfsFilesystemAdapter(),
+    ),
 )
 
 

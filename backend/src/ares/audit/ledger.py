@@ -304,7 +304,7 @@ def _peer_uid(stream: asyncio.StreamWriter) -> int:
     size = struct.calcsize("3i")
     credentials = peer.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, size)
     _, uid, _ = struct.unpack("3i", credentials)
-    return uid
+    return int(uid)
 
 
 async def _unix_server(handler: UnixHandler, socket_path: Path) -> asyncio.AbstractServer:

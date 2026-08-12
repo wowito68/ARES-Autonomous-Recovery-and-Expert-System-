@@ -183,7 +183,7 @@ class FilesystemRepairCapability:
         self.authorize = RequestFilesystemRepairAuthorizationAction(store, executor)
         self.execute_repair = ExecuteFilesystemRepairAction(store, executor)
         self.verify = VerifyFilesystemRepairAction(store)
-        self.project = ProjectFilesystemRepairGraphAction()
+        self.project = ProjectFilesystemRepairGraphAction(store)
 
     def build_workflow(self, payload: BaseModel) -> WorkflowDefinition:
         request = FilesystemRepairInput.model_validate(payload)

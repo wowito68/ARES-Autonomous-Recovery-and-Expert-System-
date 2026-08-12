@@ -205,7 +205,7 @@ async def test_audit_writer_chains_records_and_detects_tampering(tmp_path: Path)
     assert first.sequence == 1
     assert second.sequence == 2
     lines = (directory / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
-    assert json.loads(lines[0])["payload"]["password"] == "[REDACTED]"
+    assert json.loads(lines[0])["payload"]["password"] == "[REDACTED]"  # noqa: S105
 
     reloaded = AuditWriter(directory)
     reloaded.prepare()

@@ -104,7 +104,18 @@ async def test_disk_analysis_flows_through_catalog_workflow_events_and_graph(
             graph = await client.get("/api/v1/knowledge/graph")
 
     assert catalog.status_code == filtered.status_code == detail.status_code == 200
-    assert catalog.json()["count"] == filtered.json()["count"] == 1
+    assert catalog.json()["count"] == 1
+    filtered_payload = filtered.json()
+    filtered_ids = {item["id"] for item in filtered_payload["capabilities"]}
+    assert filtered_payload["count"] >= 6
+    assert {
+        "storage.disk-analysis",
+        "storage.partition.inspect",
+        "storage.partition.create",
+        "storage.partition.delete",
+        "storage.partition.resize",
+        "storage.partition.move",
+    } <= filtered_ids
     assert missing_filter.json() == {"capabilities": [], "count": 0}
     public_metadata = detail.json()
     assert public_metadata["risk_level"] == "low"

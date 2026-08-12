@@ -9,7 +9,7 @@ import os
 import stat
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from ares.filesystems.adapters import FilesystemAdapter, adapter_for
 from ares.filesystems.models import (
@@ -40,6 +40,10 @@ class FilesystemToolError(Exception):
     def __init__(self, code: str) -> None:
         super().__init__(code)
         self.code = code
+
+
+class MountSafetyInspector(Protocol):
+    def inspect(self, identity: DeviceIdentity) -> MountSafetyReport: ...
 
 
 class MountSafetyChecker:
@@ -215,7 +219,7 @@ class FilesystemToolSuite:
         self,
         *,
         runner: ProcessRunner | None = None,
-        mount_checker: MountSafetyChecker | None = None,
+        mount_checker: MountSafetyInspector | None = None,
         allow_regular_file_targets: bool = False,
     ) -> None:
         self.runner = runner or SafeProcessRunner()
@@ -512,6 +516,7 @@ class FilesystemToolSuite:
             return False
         record = plan.mount.mounts[0]
         options = tuple(option for option in record.options if option in _SAFE_MOUNT_OPTIONS)
+        args: tuple[str, ...]
         if options:
             args = (
                 "-t",

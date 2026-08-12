@@ -233,7 +233,7 @@ class FilesystemRepairService:
                     mutates_target=False,
                 )
             )
-        permissions = ("block-device.readwrite",)
+        permissions: tuple[str, ...] = ("block-device.readwrite",)
         if inspection.mount.mounted:
             permissions += ("mount.manage",)
         draft = FilesystemRepairPlan(

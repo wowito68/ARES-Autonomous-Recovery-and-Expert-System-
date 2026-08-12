@@ -39,7 +39,7 @@ async def _wait_terminal(client: AsyncClient, backup_id: str) -> dict[str, objec
     for _ in range(100):
         response = await client.get(f"/api/v1/backups/{backup_id}")
         assert response.status_code == 200
-        payload = response.json()
+        payload = cast(dict[str, object], response.json())
         if payload["status"] in {
             "COMPLETED",
             "FAILED",

@@ -206,6 +206,9 @@ class CapabilityManager:
         if registration is None:
             raise KeyError(capability_id)
         capability = registration.capability
+        if not capability.metadata.enabled:
+            reason = capability.metadata.disabled_reason or "capability is disabled"
+            raise PermissionError(reason)
         validated = capability.input_model.model_validate(payload)
         self._validate_protection_checkpoint(
             capability.metadata,
@@ -241,6 +244,10 @@ class CapabilityManager:
             raise ValueError("only mutating capabilities may require authorization")
         if metadata.requires_protection_checkpoint and metadata.mode is not CapabilityMode.MUTATING:
             raise ValueError("only mutating capabilities may require a protection checkpoint")
+        if metadata.enabled and metadata.disabled_reason is not None:
+            raise ValueError("enabled capability must not declare disabled_reason")
+        if not metadata.enabled and not metadata.disabled_reason:
+            raise ValueError("disabled capability must declare disabled_reason")
         self._validate_compatibility(
             metadata.os_compatibility.families,
             metadata.os_compatibility.architectures,

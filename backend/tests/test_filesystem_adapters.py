@@ -59,12 +59,12 @@ def test_xfs_adapter_never_uses_log_zeroing() -> None:
 
     check_tool, check_args = adapter.check_invocation("/dev/test")
     repair_tool, repair_args = adapter.repair_invocation("/dev/test")
-    image_tool, image_args = adapter.repair_invocation("/tmp/xfs.img", image=True)
+    image_tool, image_args = adapter.repair_invocation("/test-fixtures/xfs.img", image=True)
 
     assert check_tool == repair_tool == image_tool == "xfs_repair"
     assert check_args == ("-n", "/dev/test")
     assert repair_args == ("/dev/test",)
-    assert image_args == ("-f", "/tmp/xfs.img")
+    assert image_args == ("-f", "/test-fixtures/xfs.img")
     assert "-L" not in check_args + repair_args + image_args
     assert (
         adapter.parse_check(_result("xfs_repair", 1), FilesystemType.XFS).health

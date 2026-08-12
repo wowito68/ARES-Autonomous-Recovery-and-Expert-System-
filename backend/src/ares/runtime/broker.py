@@ -16,16 +16,28 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from ares.audit.ledger import AuditLedger, AuditLedgerError, UnixAuditLedgerClient
-from ares.backup.models import AuthorizationGrant, Backup, BackupManifest, BackupPlan
+from ares.backup.models import (
+    AuthorizationGrant,
+    Backup,
+    BackupEntry,
+    BackupManifest,
+    BackupPlan,
+    BackupProgress,
+)
 from ares.protection import ProtectionCheckpointStore
 from ares.runtime.consent import UnixConsentClient
 from ares.runtime.filesystem_broker import FilesystemBroker
+from ares.runtime.storage_broker import StorageBroker
+from ares.storage_operations.policy import ProductionStorageWriteGate
+from ares.storage_operations.store import StorageOperationStore
 from ares.tools.backup import BackupFilesystemTools, BackupToolError
 from ares.tools.filesystem import FilesystemToolError, FilesystemToolSuite
+from ares.tools.partition import PartitionToolError, StoragePartitionToolSuite
 
 _MAX_REQUEST_BYTES = 4_000_000
 _MAX_RESPONSE_BYTES = 128_000_000
 BrokerSend = Callable[[dict[str, Any]], Awaitable[None]]
+UnixHandler = Callable[[asyncio.StreamReader, asyncio.StreamWriter], Awaitable[None]]
 
 
 class ConsentClient(Protocol):
@@ -158,10 +170,10 @@ class BackupBroker:
             },
         )
 
-        async def progress(value) -> None:
+        async def progress(value: BackupProgress) -> None:
             await send({"type": "progress", "payload": value.model_dump(mode="json")})
 
-        async def entry(value) -> None:
+        async def entry(value: BackupEntry) -> None:
             await send(
                 {
                     "type": "entry",
@@ -272,6 +284,18 @@ async def serve_tool_broker(
         Path("/var/lib/ares/capabilities/protection/checkpoints")
     )
     filesystem_broker = FilesystemBroker(FilesystemToolSuite(), audit, consent, checkpoint_store)
+    storage_write_gate = ProductionStorageWriteGate()
+    storage_operation_store = StorageOperationStore(
+        Path("/var/lib/ares/capabilities/storage-operations")
+    )
+    storage_broker = StorageBroker(
+        StoragePartitionToolSuite(write_gate=storage_write_gate),
+        audit,
+        consent,
+        checkpoint_store,
+        storage_operation_store,
+        write_gate=storage_write_gate,
+    )
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         async def send(message: dict[str, Any]) -> None:
@@ -292,6 +316,8 @@ async def serve_tool_broker(
             peer_uid = _peer_uid(writer)
             if isinstance(action, str) and action.startswith("filesystem."):
                 result = await filesystem_broker.dispatch(request, peer_uid, send)
+            elif isinstance(action, str) and action.startswith("storage."):
+                result = await storage_broker.dispatch(request, peer_uid, send)
             else:
                 result = await backup_broker.dispatch(request, peer_uid, send)
             await send({"type": "result", "payload": result})
@@ -317,10 +343,10 @@ def _peer_uid(writer: asyncio.StreamWriter) -> int:
     size = struct.calcsize("3i")
     credentials = peer.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, size)
     _, uid, _ = struct.unpack("3i", credentials)
-    return uid
+    return int(uid)
 
 
-async def _unix_server(handler, socket_path: Path) -> asyncio.AbstractServer:
+async def _unix_server(handler: UnixHandler, socket_path: Path) -> asyncio.AbstractServer:
     listen_fds = int(os.environ.get("LISTEN_FDS", "0") or "0")
     listen_pid = int(os.environ.get("LISTEN_PID", "0") or "0")
     if listen_fds >= 1 and listen_pid == os.getpid():
@@ -347,6 +373,8 @@ def _safe_code(exc: BaseException) -> str:
     if isinstance(exc, BackupToolError):
         return exc.code
     if isinstance(exc, FilesystemToolError):
+        return exc.code
+    if isinstance(exc, PartitionToolError):
         return exc.code
     if isinstance(exc, AuditLedgerError):
         return "AUDIT_LEDGER_UNAVAILABLE"

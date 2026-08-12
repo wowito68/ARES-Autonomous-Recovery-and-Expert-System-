@@ -123,6 +123,8 @@ class CapabilityMetadata(BaseModel):
     metrics: tuple[str, ...]
     audit: AuditPolicy
     keywords: tuple[str, ...] = ()
+    enabled: bool = True
+    disabled_reason: Annotated[str | None, Field(max_length=320)] = None
 
 
 class PluginManifest(BaseModel):

@@ -72,7 +72,10 @@ class ProtectionCheckpointService:
             session_id=session_id,
             evidence_sha256=evidence,
             limitations=(
-                "El checkpoint es una copia a nivel de archivos, no un snapshot de bloques ni rollback del metadata del filesystem.",
+                (
+                    "El checkpoint es una copia a nivel de archivos, no un snapshot de "
+                    "bloques ni rollback del metadata del filesystem."
+                ),
                 "Solo protege los datos que pudieron leerse y verificarse durante backup.create.",
             ),
         )

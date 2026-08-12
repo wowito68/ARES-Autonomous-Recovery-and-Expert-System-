@@ -380,7 +380,8 @@ class ProjectBackupGraphAction:
         manifest = BackupManifest.model_validate(inputs["manifest"])
         verification = BackupVerification.model_validate(inputs["verification"])
         source_id = f"backup-source:{_id(backup.source.path)}"
-        destination_id = f"backup-destination:{_id(backup.destination.device_id + backup.destination.mount_point)}"
+        destination_identity = backup.destination.device_id + backup.destination.mount_point
+        destination_id = f"backup-destination:{_id(destination_identity)}"
         backup_id = f"backup:{backup.id}"
         verification_id = f"backup-verification:{verification.id}"
         nodes = [
