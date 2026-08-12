@@ -96,7 +96,9 @@ replace(
 replace(
     engine,
     '    no_target = diagnostic.model_copy(\n'
-    '        update={"environment": diagnostic.environment.model_copy(update={"target_disk": None})}\n'
+    '        update={\n'
+    '            "environment": diagnostic.environment.model_copy(update={"target_disk": None})\n'
+    '        }\n'
     '    )',
     '    no_target = diagnostic.model_copy(\n'
     '        update={\n'
