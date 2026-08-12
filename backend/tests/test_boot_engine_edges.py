@@ -148,7 +148,8 @@ async def test_boot_engine_plan_protection_authorization_and_execution_rejection
 
     no_target = diagnostic.model_copy(
         update={
-            "environment": diagnostic.environment.model_copy(update={"target_disk": None})
+            "id": "no-target-diagnostic",
+            "environment": diagnostic.environment.model_copy(update={"target_disk": None}),
         }
     )
     await store.put_diagnostic(no_target)
@@ -329,7 +330,12 @@ async def test_boot_issue_dependency_and_minimal_operation_helpers(tmp_path: Pat
         esp,
         (evidence,),
     )
-    assert {item.relation for item in dependencies} >= {"depends_on", "configured_by", "loads", "boots"}
+    assert {item.relation for item in dependencies} >= {
+        "depends_on",
+        "configured_by",
+        "loads",
+        "boots",
+    }
 
     assert _select_os((os_one,), None) == os_one
     assert _select_os((os_one, os_two), "os:two") == os_two
@@ -344,7 +350,12 @@ async def test_boot_issue_dependency_and_minimal_operation_helpers(tmp_path: Pat
     assert _diagnostic_confidence((), ()) == 0.0
     assert "additional evidence" in _recommended_action((), [os_one])
     no_issue_entries = (
-        BootEntry(number="0001", label="debian", loader_path="EFI/debian/grubx64.efi"),
+        BootEntry(
+            id="entry:0001",
+            number="0001",
+            label="debian",
+            loader_path="EFI/debian/grubx64.efi",
+        ),
     )
     no_efi_issue = _issues(
         firmware=FirmwareMode.UEFI,

@@ -15,12 +15,13 @@ from ares.boot.store import BootRecoveryStore
 from ares.runtime.boot_broker import BootBroker
 from ares.storage_operations.models import StorageDeviceIdentity
 from ares.tools.boot import BootToolError
+from ares.tools.partition import DiskIdentityTool
 from tests.test_boot_engine import _diagnostic, _engine
 from tests.test_boot_tools import _root
 from tests.test_storage_partition_edges import _identity
 
 
-class _IdentityFixture:
+class _IdentityFixture(DiskIdentityTool):
     def __init__(self, identity: StorageDeviceIdentity) -> None:
         self.identity = identity
         self.calls: list[str] = []
@@ -40,9 +41,7 @@ class _ConsentFixture:
         self.requested.append(plan.id)
         return {"challenge_id": "boot-challenge-1234"}
 
-    async def wait(
-        self, challenge_id: str, timeout_seconds: float = 600.0
-    ) -> dict[str, Any]:
+    async def wait(self, challenge_id: str, timeout_seconds: float = 600.0) -> dict[str, Any]:
         del timeout_seconds
         assert challenge_id == "boot-challenge-1234"
         return {"decision": self.decision, "operator_uid": self.operator_uid}
@@ -57,8 +56,8 @@ class _CompletionFailAudit:
         *,
         event_type: str,
         source: str,
-        correlation_id: str | None,
-        session_id: str | None,
+        correlation_id: str,
+        session_id: str,
         payload: dict[str, Any],
     ) -> AuditReceipt:
         if event_type == "boot.repair.execution-completed":
@@ -116,7 +115,7 @@ async def test_boot_broker_checkpoint_authorize_execute_verify_and_one_use(tmp_p
         1000,
         _ignore_send,
     )
-    assert checkpoint_payload["checkpoint"]["status"] == "READY"
+    assert checkpoint_payload["checkpoint"]["status"] == "ready"
     assert checkpoint_payload["artifact"]["file_hashes"]
 
     messages: list[dict[str, Any]] = []
@@ -129,9 +128,7 @@ async def test_boot_broker_checkpoint_authorize_execute_verify_and_one_use(tmp_p
         1000,
         send,
     )
-    assert messages == [
-        {"type": "authorization_requested", "challenge_id": "boot-challenge-1234"}
-    ]
+    assert messages == [{"type": "authorization_requested", "challenge_id": "boot-challenge-1234"}]
     assert grant_payload["operator_uid"] == 1000
 
     async def lose_observer(message: dict[str, Any]) -> None:

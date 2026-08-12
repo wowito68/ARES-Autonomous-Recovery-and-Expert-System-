@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import builtins
 from pathlib import Path
 
@@ -59,9 +58,7 @@ class _BootServiceFixture:
         self._fail()
         return self.diagnostic_result
 
-    async def plan(
-        self, request: BootRepairPlanRequest, *, session_id: str
-    ) -> BootRepairPlan:
+    async def plan(self, request: BootRepairPlanRequest, *, session_id: str) -> BootRepairPlan:
         del request, session_id
         self._fail()
         return self.repair_plan
@@ -141,7 +138,10 @@ async def test_boot_api_success_not_found_and_problem_mapping(tmp_path: Path) ->
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
         diagnose = await client.post(
             "/api/v1/boot/diagnose",
-            json={"target_disk": None, "root_path": service.diagnostic_result.environment.operating_systems[0].root_path},
+            json={
+                "target_disk": None,
+                "root_path": service.diagnostic_result.environment.operating_systems[0].root_path,
+            },
         )
         assert diagnose.status_code == 200
         planned = await client.post(
@@ -166,9 +166,7 @@ async def test_boot_api_success_not_found_and_problem_mapping(tmp_path: Path) ->
 
         service.missing = True
         assert (await client.get("/api/v1/boot/repairs/missing")).status_code == 404
-        assert (
-            await client.get("/api/v1/boot/repairs/missing/verification")
-        ).status_code == 404
+        assert (await client.get("/api/v1/boot/repairs/missing/verification")).status_code == 404
         service.missing = False
 
         service.error_code = "BOOT_FIXTURE_REJECTED"
@@ -189,9 +187,7 @@ async def test_boot_api_success_not_found_and_problem_mapping(tmp_path: Path) ->
         )
         assert rejected_start.status_code == 409
         assert (await client.post(f"/api/v1/boot/repairs/{repair_id}/cancel")).status_code == 409
-        assert (
-            await client.post(f"/api/v1/boot/repairs/{repair_id}/reconcile")
-        ).status_code == 409
+        assert (await client.post(f"/api/v1/boot/repairs/{repair_id}/reconcile")).status_code == 409
 
 
 async def test_boot_cli_commands_and_repair_loop(
@@ -218,39 +214,24 @@ async def test_boot_cli_commands_and_repair_loop(
 
     service.missing = True
     assert (
-        await cli._boot_command(
-            parser.parse_args(["boot", "status", "missing-repair"]), app
-        )
-        == 3
+        await cli._boot_command(parser.parse_args(["boot", "status", "missing-repair"]), app) == 3
     )
     assert (
-        await cli._boot_command(
-            parser.parse_args(["boot", "verify", "missing-repair"]), app
-        )
-        == 3
+        await cli._boot_command(parser.parse_args(["boot", "verify", "missing-repair"]), app) == 3
     )
     service.missing = False
 
-    assert (
-        await cli._boot_command(
-            parser.parse_args(["boot", "repair", "missing-plan"]), app
-        )
-        == 3
-    )
+    assert await cli._boot_command(parser.parse_args(["boot", "repair", "missing-plan"]), app) == 3
 
     monkeypatch.setattr(builtins, "input", lambda prompt: "NO")
     assert (
-        await cli._boot_command(
-            parser.parse_args(["boot", "repair", service.repair_plan.id]), app
-        )
+        await cli._boot_command(parser.parse_args(["boot", "repair", service.repair_plan.id]), app)
         == 4
     )
 
     monkeypatch.setattr(builtins, "input", lambda prompt: "REQUEST")
     assert (
-        await cli._boot_command(
-            parser.parse_args(["boot", "repair", service.repair_plan.id]), app
-        )
+        await cli._boot_command(parser.parse_args(["boot", "repair", service.repair_plan.id]), app)
         == 0
     )
 

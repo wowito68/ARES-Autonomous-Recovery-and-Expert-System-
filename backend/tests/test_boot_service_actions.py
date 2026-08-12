@@ -24,7 +24,7 @@ from ares.capabilities import CapabilityManager
 from ares.capabilities.plugins.boot_recovery import BootRecoveryPlugin
 from ares.events import EventBus, MemoryEventSink
 from ares.knowledge import GraphKind, KnowledgeGraph
-from ares.workflows import StepOutputs, WorkflowEngine
+from ares.workflows import WorkflowEngine
 from tests.test_boot_engine import _diagnostic, _engine
 from tests.test_boot_tools import _root
 
@@ -104,6 +104,11 @@ async def test_boot_service_runs_capability_and_projects_repair_graph(tmp_path: 
     assert terminal.execution.status is BootRepairStatus.COMPLETED
     assert terminal.verification is not None
     assert await service.verification(repair_id) == terminal.verification
+    for _ in range(200):
+        if repair_id not in service._tasks:
+            break
+        await asyncio.sleep(0.01)
+    assert repair_id not in service._tasks
 
     snapshot = await graph.snapshot()
     kinds = {node.kind for node in snapshot.nodes}
@@ -170,16 +175,15 @@ async def test_boot_service_cancel_reconcile_and_validation_edges(tmp_path: Path
             }
         )
     )
-    verification = await service.reconcile(
-        protected.repair_id, session_id="boot-reconcile-session"
-    )
-    assert verification.status.value == "PARTIAL"
+    verification = await service.reconcile(protected.repair_id, session_id="boot-reconcile-session")
+    assert verification.status.value == "FAILED"
     reconciled = await service.get(protected.repair_id)
     assert reconciled is not None
-    assert reconciled.execution.status is BootRepairStatus.COMPLETED
+    assert reconciled.execution.status is BootRepairStatus.UNKNOWN
+    assert reconciled.execution.reconciliation_required is True
 
     postcheck = BootRepairPostcheck()
-    assert await postcheck({}, StepOutputs()) is False
+    assert await postcheck({}, {}) is False
 
     with pytest.raises(BootRecoveryServiceError, match="BOOT_REPAIR_NOT_UNKNOWN"):
         await service.reconcile(plan.repair_id, session_id="boot-cancel-session")
