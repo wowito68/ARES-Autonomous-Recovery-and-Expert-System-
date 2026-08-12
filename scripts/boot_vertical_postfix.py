@@ -41,3 +41,49 @@ replace_once(
     '    parsed_diagnose = parser.parse_args(["boot", "diagnose", "--root-path", "/mnt/linux"])\n'
     '    assert parsed_diagnose.boot_command == "diagnose"\n',
 )
+
+replace_once(
+    "backend/src/ares/runtime/consent.py",
+    '                "firmware_mode": plan.boot_impact.firmware_mode,\n',
+    '                "boot_impact": plan.boot_impact.level.value,\n',
+)
+replace_once(
+    "backend/src/ares/runtime/broker.py",
+    '    boot_broker = BootBroker(\n'
+    '        BootRepairToolSuite(),\n'
+    '        DiskIdentityTool(),\n'
+    '        audit,\n'
+    '        consent,\n'
+    '        checkpoint_store,\n'
+    '        boot_store,\n'
+    '    )\n',
+    '    boot_broker = BootBroker(\n'
+    '        tools=BootRepairToolSuite(),\n'
+    '        identity=DiskIdentityTool(),\n'
+    '        audit=audit,\n'
+    '        consent=consent,\n'
+    '        checkpoints=checkpoint_store,\n'
+    '        store=boot_store,\n'
+    '    )\n',
+)
+
+replace_once(
+    "backend/src/ares/cli.py",
+    '            result = await service.plan(\n',
+    '            repair_plan = await service.plan(\n',
+)
+replace_once(
+    "backend/src/ares/cli.py",
+    '            print(result.model_dump_json(indent=2))\n            return 0 if result.executable else 3\n',
+    '            print(repair_plan.model_dump_json(indent=2))\n'
+    '            return 0 if repair_plan.executable else 3\n',
+)
+replace_once(
+    "backend/src/ares/cli.py",
+    '            result = await service.reconcile(repair_id, session_id=record.execution.session_id)\n'
+    '            print(result.model_dump_json(indent=2))\n',
+    '            reconciliation = await service.reconcile(\n'
+    '                repair_id, session_id=record.execution.session_id\n'
+    '            )\n'
+    '            print(reconciliation.model_dump_json(indent=2))\n',
+)
