@@ -30,7 +30,8 @@ def test_boot_is_registered_across_composition_api_cli_and_reasoning(app: FastAP
     assert "/api/v1/boot/repairs/{repair_id}/cancel" in paths
 
     parser = build_parser()
-    assert parser.parse_args(["boot", "diagnose", "--root-path", "/mnt/linux"]).boot_command == "diagnose"
+    parsed_diagnose = parser.parse_args(["boot", "diagnose", "--root-path", "/mnt/linux"])
+    assert parsed_diagnose.boot_command == "diagnose"
     assert parser.parse_args(["boot", "plan", "diagnostic123"]).boot_command == "plan"
     assert parser.parse_args(["boot", "repair", "plan12345"]).boot_command == "repair"
     assert parser.parse_args(["boot", "status", "repair123"]).boot_command == "status"

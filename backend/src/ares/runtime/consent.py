@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from ares.audit.ledger import AuditLedger, AuditLedgerError, UnixAuditLedgerClient
 from ares.backup.models import BackupPlan
+from ares.boot.models import BootRepairPlan
 from ares.filesystems.models import FilesystemRepairPlan
 from ares.storage_operations.models import StorageOperationPlan
 
@@ -83,6 +84,9 @@ class ConsentAuthority:
         if action == "storage.create":
             self._require_peer(peer_uid, self.broker_uid)
             return await self._create_storage(request)
+        if action == "boot.create":
+            self._require_peer(peer_uid, self.broker_uid)
+            return await self._create_boot(request)
         if action == "wait":
             self._require_peer(peer_uid, self.broker_uid)
             return await self._wait(request)
@@ -242,6 +246,52 @@ class ConsentAuthority:
         )
         return challenge.public()
 
+    async def _create_boot(self, request: dict[str, Any]) -> dict[str, Any]:
+        plan = BootRepairPlan.model_validate(request.get("plan"))
+        checkpoint = plan.protection_checkpoint
+        if checkpoint is None:
+            raise ValueError("boot checkpoint required")
+        challenge = _Challenge(
+            id=uuid4().hex,
+            kind="boot_repair",
+            plan_id=plan.id,
+            fingerprint=plan.fingerprint_sha256,
+            session_id=plan.session_id,
+            correlation_id=plan.repair_id,
+            capability_id="boot.repair.grub",
+            risk=plan.risk,
+            confirmation_phrase=(
+                "I understand that this operation modifies boot state. "
+                f"APPROVE {plan.fingerprint_sha256[:12]}"
+            ),
+            public_payload={
+                "repair_id": plan.repair_id,
+                "target_os": plan.target_os.id,
+                "target": plan.target_disk.canonical_path,
+                "target_fingerprint": plan.target_disk.fingerprint_sha256,
+                "boot_impact": plan.boot_impact.level.value,
+                "bootloader": plan.bootloader.kind.value,
+                "root_path": plan.target_os.root_path,
+                "esp": plan.target_esp.resource_id if plan.target_esp else None,
+                "checkpoint_id": checkpoint.id,
+                "operations": [item.kind.value for item in plan.operations if item.enabled],
+                "issue_codes": [item.code.value for item in plan.issues],
+                "limitations": list(plan.limitations),
+                "offline_verification_reboot_proof": False,
+            },
+            expires_at=min(plan.expires_at, datetime.now(UTC) + timedelta(minutes=10)),
+        )
+        await self._store_and_audit_requested(
+            challenge,
+            {
+                "repair_id": plan.repair_id,
+                "target_fingerprint": plan.target_disk.fingerprint_sha256,
+                "checkpoint_id": checkpoint.id,
+                "operation_count": len(plan.operations),
+            },
+        )
+        return challenge.public()
+
     async def _store_and_audit_requested(
         self, challenge: _Challenge, details: dict[str, Any]
     ) -> None:
@@ -361,6 +411,13 @@ class UnixConsentClient:
         return await _request(
             self.socket_path,
             {"action": "storage.create", "plan": plan.model_dump(mode="json")},
+            timeout_seconds=3.0,
+        )
+
+    async def request_boot(self, plan: BootRepairPlan) -> dict[str, Any]:
+        return await _request(
+            self.socket_path,
+            {"action": "boot.create", "plan": plan.model_dump(mode="json")},
             timeout_seconds=3.0,
         )
 
@@ -505,6 +562,8 @@ def _event_prefix(challenge: _Challenge) -> str:
         return "backup"
     if challenge.kind == "storage_operation":
         return "storage"
+    if challenge.kind == "boot_repair":
+        return "boot.repair"
     return "repair"
 
 

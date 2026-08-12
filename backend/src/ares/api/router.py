@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from ares.api.routes.ai import router as ai_router
 from ares.api.routes.assistant import router as assistant_router
 from ares.api.routes.backups import router as backups_router
+from ares.api.routes.boot import router as boot_router
 from ares.api.routes.capabilities import router as capabilities_router
 from ares.api.routes.diagnostics import router as diagnostics_router
 from ares.api.routes.filesystems import router as filesystems_router
@@ -28,5 +29,6 @@ api_router.include_router(planner_router, prefix="/planner", tags=["planner"])
 api_router.include_router(storage_router, prefix="/storage", tags=["storage"])
 api_router.include_router(storage_operations_router, prefix="/storage", tags=["storage-operations"])
 api_router.include_router(backups_router, prefix="/backups", tags=["backups"])
+api_router.include_router(boot_router)
 api_router.include_router(filesystems_router, prefix="/filesystems", tags=["filesystems"])
 api_router.include_router(diagnostics_router, prefix="/diagnostics", tags=["diagnostics"])
