@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import ClassVar
 
@@ -25,7 +26,7 @@ from ares.tools.boot import (
     hash_file,
     parse_efibootmgr,
 )
-from tests.test_boot_tools import _Result, _esp, _plan, _root
+from tests.test_boot_tools import _esp, _plan, _Result, _root
 
 
 class _ConfigurableRunner:
@@ -66,7 +67,7 @@ async def test_safe_boot_runner_rejects_commands_missing_tools_and_large_input(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runner = SafeBootProcessRunner()
-    monkeypatch.setattr(boot_tools.shutil, "which", lambda tool: None)
+    monkeypatch.setattr(shutil, "which", lambda tool: None)
     assert runner.available("grub-install") is False
     assert runner.available("python") is False
 
@@ -75,7 +76,7 @@ async def test_safe_boot_runner_rejects_commands_missing_tools_and_large_input(
     with pytest.raises(BootToolError, match="BOOT_TOOL_UNAVAILABLE_GRUB_INSTALL"):
         await runner.run("grub-install", (), timeout_seconds=1)
 
-    monkeypatch.setattr(boot_tools.shutil, "which", lambda tool: f"/usr/bin/{tool}")
+    monkeypatch.setattr(shutil, "which", lambda tool: f"/usr/bin/{tool}")
     with pytest.raises(BootToolError, match="BOOT_TOOL_INPUT_TOO_LARGE"):
         await runner.run(
             "chroot",
@@ -209,6 +210,7 @@ async def test_repair_environment_real_mode_mount_and_cleanup_paths(tmp_path: Pa
     runner.available_tools.remove("umount")
     with pytest.raises(BootToolError, match="UMOUNT_UNAVAILABLE"):
         await RepairEnvironmentTool(runner).cleanup_paths(("/fixture",))
+    runner.available_tools.add("umount")
 
     runner = _ConfigurableRunner()
     runner.fail_tool = "umount"
@@ -273,10 +275,7 @@ async def test_boot_verification_failed_static_chain_and_efi_entry(tmp_path: Pat
     root = _root(tmp_path, grub=False, initramfs=False)
     esp = _esp(tmp_path, "EFI/debian/grubx64.efi")
     runner = _ConfigurableRunner()
-    runner.efi_stdout = (
-        "Boot0001* debian HD(1,GPT,x,0x1,0x2)"
-        "File(\\EFI\\debian\\grubx64.efi)\n"
-    )
+    runner.efi_stdout = "Boot0001* debian HD(1,GPT,x,0x1,0x2)File(\\EFI\\debian\\grubx64.efi)\n"
     tools = BootRepairToolSuite(runner=runner, test_mode=True, runtime_root=tmp_path / "run")
     verification = await tools.verification.verify(_plan(root, esp))
     assert verification.status is BootVerificationStatus.FAILED
