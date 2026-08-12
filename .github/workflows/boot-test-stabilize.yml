@@ -86,7 +86,12 @@ jobs:
               raise SystemExit("Boot engine line-length anchor missing")
           text = text.replace(old, new, 1)
           old_entry = '        BootEntry(number="0001", label="debian", loader_path="EFI/debian/grubx64.efi"),'
-          new_entry = '        BootEntry(id="entry:0001", number="0001", label="debian", loader_path="EFI/debian/grubx64.efi"),'
+          new_entry = '''        BootEntry(
+              id="entry:0001",
+              number="0001",
+              label="debian",
+              loader_path="EFI/debian/grubx64.efi",
+          ),'''
           if old_entry not in text:
               raise SystemExit("BootEntry fixture anchor missing")
           engine.write_text(text.replace(old_entry, new_entry, 1), encoding="utf-8")
