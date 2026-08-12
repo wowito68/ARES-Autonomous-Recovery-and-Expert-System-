@@ -8,8 +8,10 @@ from typing import Any
 import pytest
 
 from ares.audit import AuditLedgerError, AuditReceipt, MemoryAuditLedger
+from ares.boot.engine import BootRecoveryEngine
 from ares.boot.executor import BootExecutorError, UnixBrokerBootExecutor
 from ares.boot.models import BootRepairPlan, BootRepairPlanInput
+from ares.boot.store import BootRecoveryStore
 from ares.runtime.boot_broker import BootBroker
 from ares.storage_operations.models import StorageDeviceIdentity
 from ares.tools.boot import BootToolError
@@ -70,7 +72,9 @@ class _CompletionFailAudit:
         )
 
 
-async def _plan_and_protect(tmp_path: Path) -> tuple[object, object, BootRepairPlan]:
+async def _plan_and_protect(
+    tmp_path: Path,
+) -> tuple[BootRecoveryEngine, BootRecoveryStore, BootRepairPlan]:
     root = _root(tmp_path, grub=False, initramfs=False)
     engine, store, _ = _engine(tmp_path)
     diagnostic = _diagnostic(root)
