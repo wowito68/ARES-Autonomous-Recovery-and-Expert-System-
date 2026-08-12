@@ -15,4 +15,8 @@ new = '''    with pytest.raises(BootToolError, match="UMOUNT_UNAVAILABLE"):
     runner.fail_tool = "umount"'''
 if old not in text:
     raise SystemExit("fixture anchor missing")
-path.write_text(text.replace(old, new, 1), encoding="utf-8")
+text = text.replace(old, new, 1)
+if "import shutil\n" not in text:
+    text = text.replace("from pathlib import Path\n", "from pathlib import Path\nimport shutil\n", 1)
+text = text.replace("boot_tools.shutil, \"which\"", "shutil, \"which\"")
+path.write_text(text, encoding="utf-8")
