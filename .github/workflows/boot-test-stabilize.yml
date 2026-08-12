@@ -25,11 +25,42 @@ jobs:
       - name: Install locked dependencies
         working-directory: backend
         run: uv sync --frozen --dev
-      - name: Fix export path and format Boot tests
+      - name: Fix and validate Boot coverage tests
         run: |
-          sed -i 's/from ares.workflows import StepOutputs, WorkflowEngine/from ares.workflows import WorkflowEngine\nfrom ares.workflows.models import StepOutputs/' backend/tests/test_boot_service_actions.py
           python3 - <<'PY'
           from pathlib import Path
+
+          def replace(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text(encoding="utf-8")
+              if old not in text:
+                  raise SystemExit(f"anchor missing in {path}: {old[:100]!r}")
+              target.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          service = "backend/tests/test_boot_service_actions.py"
+          replace(
+              service,
+              "from ares.workflows import StepOutputs, WorkflowEngine",
+              "from ares.workflows import WorkflowEngine",
+          )
+          replace(
+              service,
+              "    assert await postcheck({}, StepOutputs()) is False",
+              "    assert await postcheck({}, {}) is False",
+          )
+
+          runtime = "backend/tests/test_boot_runtime_edges.py"
+          replace(
+              runtime,
+              "from ares.tools.boot import BootToolError",
+              "from ares.tools.boot import BootToolError\nfrom ares.tools.partition import DiskIdentityTool",
+          )
+          replace(runtime, "class _IdentityFixture:", "class _IdentityFixture(DiskIdentityTool):")
+          replace(
+              runtime,
+              "        correlation_id: str | None,\n        session_id: str | None,",
+              "        correlation_id: str,\n        session_id: str,",
+          )
 
           api = Path("backend/tests/test_boot_api_cli_edges.py")
           text = api.read_text(encoding="utf-8")
@@ -53,7 +84,12 @@ jobs:
           }'''
           if old not in text:
               raise SystemExit("Boot engine line-length anchor missing")
-          engine.write_text(text.replace(old, new, 1), encoding="utf-8")
+          text = text.replace(old, new, 1)
+          old_entry = '        BootEntry(number="0001", label="debian", loader_path="EFI/debian/grubx64.efi"),'
+          new_entry = '        BootEntry(id="entry:0001", number="0001", label="debian", loader_path="EFI/debian/grubx64.efi"),'
+          if old_entry not in text:
+              raise SystemExit("BootEntry fixture anchor missing")
+          engine.write_text(text.replace(old_entry, new_entry, 1), encoding="utf-8")
           PY
           cd backend
           uv run --frozen ruff check --fix tests/test_boot_api_cli_edges.py tests/test_boot_engine_edges.py tests/test_boot_runtime_edges.py tests/test_boot_service_actions.py
