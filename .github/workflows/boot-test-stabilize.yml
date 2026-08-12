@@ -29,6 +29,7 @@ jobs:
         run: |
           sed -i 's/from ares.workflows import StepOutputs, WorkflowEngine/from ares.workflows import WorkflowEngine\nfrom ares.workflows.models import StepOutputs/' backend/tests/test_boot_service_actions.py
           cd backend
+          uv run --frozen ruff check --fix tests/test_boot_api_cli_edges.py tests/test_boot_engine_edges.py tests/test_boot_runtime_edges.py tests/test_boot_service_actions.py
           uv run --frozen ruff format tests/test_boot_api_cli_edges.py tests/test_boot_engine_edges.py tests/test_boot_runtime_edges.py tests/test_boot_service_actions.py
           uv run --frozen ruff check tests/test_boot_api_cli_edges.py tests/test_boot_engine_edges.py tests/test_boot_runtime_edges.py tests/test_boot_service_actions.py
           uv run --frozen mypy
