@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 
 from ares.protection import ProtectionCheckpoint, ProtectionCheckpointStatus
@@ -16,7 +17,12 @@ class RecoveryCheckpointError(Exception):
 
 
 class RecoveryCheckpointProvider:
-    """Create truthful checkpoints for supported mutable recovery resources."""
+    """Copy and verify the exact mutable state protected by a recovery operation."""
+
+    def __init__(self, artifact_root: Path) -> None:
+        self.artifact_root = artifact_root
+        artifact_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(artifact_root, 0o700)
 
     def create(
         self,
@@ -25,60 +31,58 @@ class RecoveryCheckpointProvider:
         root: Path,
         session_id: str,
     ) -> ProtectionCheckpoint:
+        directory = self.artifact_root / operation.operation_id
+        directory.mkdir(mode=0o700, parents=True, exist_ok=False)
         if operation.strategy is RecoveryStrategyKind.CONFIGURATION:
-            raw = operation.payload.get("configuration_diff")
-            change = ConfigurationDiff.model_validate(raw)
+            change = ConfigurationDiff.model_validate(operation.payload.get("configuration_diff"))
             target = root / change.path.lstrip("/")
-            if not target.is_file():
-                raise RecoveryCheckpointError("RECOVERY_CONFIGURATION_TARGET_MISSING")
-            current = target.read_bytes()
-            digest = hashlib.sha256(current).hexdigest()
+            current, digest = self._copy_verified(target, directory / "configuration.original")
             if digest != change.current_sha256:
                 raise RecoveryCheckpointError("RECOVERY_CONFIGURATION_CHANGED_SINCE_PLAN")
-            return ProtectionCheckpoint(
-                status=ProtectionCheckpointStatus.READY,
-                provider_capability="configuration.recover",
-                provider_id=operation.operation_id,
-                artifact_id=f"config:{operation.operation_id}:{digest[:16]}",
-                protected_resource_ids=(change.path,),
-                protected_resource_fingerprints={change.path: digest},
-                verification_id=f"sha256:{digest}",
-                session_id=session_id,
-                evidence_sha256=digest,
-            )
-        if operation.strategy is RecoveryStrategyKind.PACKAGE:
-            status = root / "var/lib/dpkg/status"
-            if not status.is_file():
-                raise RecoveryCheckpointError("RECOVERY_PACKAGE_DATABASE_MISSING")
-            digest = hashlib.sha256(status.read_bytes()).hexdigest()
-            return ProtectionCheckpoint(
-                status=ProtectionCheckpointStatus.READY,
-                provider_capability="package.repair",
-                provider_id=operation.operation_id,
-                artifact_id=f"dpkg-status:{operation.operation_id}:{digest[:16]}",
-                protected_resource_ids=("/var/lib/dpkg/status",),
-                protected_resource_fingerprints={"/var/lib/dpkg/status": digest},
-                verification_id=f"sha256:{digest}",
-                session_id=session_id,
-                evidence_sha256=digest,
-            )
-        if operation.strategy is RecoveryStrategyKind.INITRAMFS:
+            resource = change.path
+            capability = "configuration.recover"
+            artifact = str(directory / "configuration.original")
+        elif operation.strategy is RecoveryStrategyKind.PACKAGE:
+            target = root / "var/lib/dpkg/status"
+            current, digest = self._copy_verified(target, directory / "dpkg.status")
+            resource = "/var/lib/dpkg/status"
+            capability = "package.repair"
+            artifact = str(directory / "dpkg.status")
+        elif operation.strategy is RecoveryStrategyKind.INITRAMFS:
             kernel = str(operation.payload.get("kernel_version", ""))
             if not kernel:
                 raise RecoveryCheckpointError("RECOVERY_KERNEL_VERSION_MISSING")
-            kernel_path = root / "boot" / f"vmlinuz-{kernel}"
-            if not kernel_path.is_file():
-                raise RecoveryCheckpointError("RECOVERY_KERNEL_ARTIFACT_MISSING")
-            digest = hashlib.sha256(kernel_path.read_bytes()).hexdigest()
-            return ProtectionCheckpoint(
-                status=ProtectionCheckpointStatus.READY,
-                provider_capability="initramfs.rebuild",
-                provider_id=operation.operation_id,
-                artifact_id=f"kernel:{operation.operation_id}:{digest[:16]}",
-                protected_resource_ids=(f"/boot/vmlinuz-{kernel}",),
-                protected_resource_fingerprints={f"/boot/vmlinuz-{kernel}": digest},
-                verification_id=f"sha256:{digest}",
-                session_id=session_id,
-                evidence_sha256=digest,
-            )
-        raise RecoveryCheckpointError("RECOVERY_CHECKPOINT_STRATEGY_UNSUPPORTED")
+            target = root / "boot" / f"vmlinuz-{kernel}"
+            current, digest = self._copy_verified(target, directory / f"vmlinuz-{kernel}")
+            existing = root / "boot" / f"initrd.img-{kernel}"
+            if existing.is_file():
+                self._copy_verified(existing, directory / f"initrd.img-{kernel}")
+            resource = f"/boot/vmlinuz-{kernel}"
+            capability = "initramfs.rebuild"
+            artifact = str(directory)
+        else:
+            raise RecoveryCheckpointError("RECOVERY_CHECKPOINT_STRATEGY_UNSUPPORTED")
+        del current
+        return ProtectionCheckpoint(
+            status=ProtectionCheckpointStatus.READY,
+            provider_capability=capability,
+            provider_id=operation.operation_id,
+            artifact_id=artifact,
+            protected_resource_ids=(resource,),
+            protected_resource_fingerprints={resource: digest},
+            verification_id=f"sha256:{digest}",
+            session_id=session_id,
+            evidence_sha256=digest,
+        )
+
+    @staticmethod
+    def _copy_verified(source: Path, destination: Path) -> tuple[bytes, str]:
+        if source.is_symlink() or not source.is_file():
+            raise RecoveryCheckpointError("RECOVERY_CHECKPOINT_SOURCE_INVALID")
+        content = source.read_bytes()
+        digest = hashlib.sha256(content).hexdigest()
+        destination.write_bytes(content)
+        os.chmod(destination, 0o600)
+        if hashlib.sha256(destination.read_bytes()).hexdigest() != digest:
+            raise RecoveryCheckpointError("RECOVERY_CHECKPOINT_VERIFICATION_FAILED")
+        return content, digest
