@@ -31,7 +31,9 @@ jobs:
         run: uv sync --frozen --dev
 
       - name: Apply Boot vertical integration
-        run: python3 scripts/boot_vertical_finalize.py
+        run: |
+          python3 scripts/boot_vertical_finalize.py
+          python3 scripts/boot_vertical_postfix.py
 
       - name: Format and lint
         working-directory: backend
@@ -62,7 +64,7 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git rm .github/workflows/boot-vertical-finalize.yml scripts/boot_vertical_finalize.py
+          git rm .github/workflows/boot-vertical-finalize.yml scripts/boot_vertical_finalize.py scripts/boot_vertical_postfix.py
           git add backend live .github/workflows/backend-ci.yml
           git diff --cached --check
           git commit -m 'Integrate Boot Recovery vertical slice'
