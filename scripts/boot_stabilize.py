@@ -27,6 +27,11 @@ replace_exact(
 )
 replace_exact(
     tools,
+    "        if plan.target_esp is not None:\n            if environment.esp_path is None:",
+    "        args: tuple[str, ...]\n        if plan.target_esp is not None:\n            if environment.esp_path is None:",
+)
+replace_exact(
+    tools,
     "                repair_supported=kind is BootloaderKind.GRUB and family is DistributionFamily.DEBIAN,",
     "                repair_supported=(\n                    kind is BootloaderKind.GRUB\n                    and family is DistributionFamily.DEBIAN\n                ),",
 )
@@ -50,6 +55,7 @@ replacements = {
         "        return BootIssueSeverity.INFO\n"
         "    return max(issues, key=lambda item: order[item.severity]).severity"
     ),
+    "            recovery_required=True,": "            recovery_strategy_available=True,",
     'summary="Multiple Linux installations were detected; a repair target must be selected.",': (
         'summary=(\n                    "Multiple Linux installations were detected; "\n'
         '                    "a repair target must be selected."\n                ),'
@@ -125,7 +131,43 @@ replace_exact(
     '            "verification evidence."\n        ),',
 )
 
+graph = Path("backend/src/ares/knowledge/graph.py")
+replace_exact(
+    graph,
+    '    STORAGE_VERIFICATION = "storage_verification"\n    KERNEL = "kernel"',
+    '    STORAGE_VERIFICATION = "storage_verification"\n'
+    '    FIRMWARE = "firmware"\n'
+    '    BOOTLOADER = "bootloader"\n'
+    '    BOOT_ENTRY = "boot_entry"\n'
+    '    BOOT_CONFIGURATION = "boot_configuration"\n'
+    '    INITRAMFS = "initramfs"\n'
+    '    BOOT_REPAIR = "boot_repair"\n'
+    '    BOOT_VERIFICATION = "boot_verification"\n'
+    '    KERNEL = "kernel"',
+)
+
+executor = Path("backend/src/ares/boot/executor.py")
+replace_exact(
+    executor,
+    '                if kind != "result" or not isinstance(message.get("payload"), dict):\n'
+    '                    raise BootExecutorError("BOOT_BROKER_RESPONSE_INVALID")\n'
+    '                return message["payload"]',
+    '                result_payload = message.get("payload")\n'
+    '                if kind != "result" or not isinstance(result_payload, dict):\n'
+    '                    raise BootExecutorError("BOOT_BROKER_RESPONSE_INVALID")\n'
+    '                if not all(isinstance(key, str) for key in result_payload):\n'
+    '                    raise BootExecutorError("BOOT_BROKER_RESPONSE_INVALID")\n'
+    '                return {str(key): value for key, value in result_payload.items()}',
+)
+
 test_tools = Path("backend/tests/test_boot_tools.py")
+replace_exact(
+    test_tools,
+    "    BootConfiguration,\n    BootPartition,",
+    "    BootConfiguration,\n    BootOperationKind,\n    BootPartition,",
+)
+replace_exact(test_tools, '                kind="INSTALL_GRUB",', '                kind=BootOperationKind.INSTALL_GRUB,')
+replace_exact(test_tools, "            recovery_required=True,", "            recovery_strategy_available=True,")
 replace_exact(
     test_tools,
     '    available_tools: ClassVar[set[str]] = {"efibootmgr", "mount", "umount", "grub-install", "chroot"}',
