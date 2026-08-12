@@ -1,0 +1,44 @@
+name: Recovery Core Stabilizer
+
+on:
+  push:
+    branches:
+      - agent/system-recovery-orchestrator
+
+permissions:
+  contents: write
+
+jobs:
+  stabilize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/system-recovery-orchestrator
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: 0.11.14
+          python-version: '3.12'
+          working-directory: backend
+      - name: Install locked dependencies
+        working-directory: backend
+        run: uv sync --frozen --dev
+      - name: Patch and validate recovery core
+        run: |
+          python3 scripts/recovery_core_patch.py
+          cd backend
+          uv run --frozen ruff check --fix src/ares/recovery src/ares/tools/recovery.py src/ares/actions/recovery.py src/ares/capabilities/plugins/system_recovery.py src/ares/runtime/recovery_broker.py
+          uv run --frozen ruff format src/ares/recovery src/ares/tools/recovery.py src/ares/actions/recovery.py src/ares/capabilities/plugins/system_recovery.py src/ares/runtime/recovery_broker.py
+          uv run --frozen ruff check src/ares/recovery src/ares/tools/recovery.py src/ares/actions/recovery.py src/ares/capabilities/plugins/system_recovery.py src/ares/runtime/recovery_broker.py
+          uv run --frozen mypy
+      - name: Commit validated core and remove stabilizer
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/recovery-core-stabilize.yml scripts/recovery_core_patch.py
+          git add backend/src/ares/recovery backend/src/ares/tools/recovery.py backend/src/ares/actions/recovery.py backend/src/ares/capabilities/plugins/system_recovery.py backend/src/ares/runtime/recovery_broker.py
+          git diff --cached --check
+          git commit -m 'Stabilize System Recovery core contracts'
+          git push origin HEAD:agent/system-recovery-orchestrator
