@@ -65,7 +65,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git rm .github/workflows/boot-vertical-finalize.yml scripts/boot_vertical_finalize.py scripts/boot_vertical_postfix.py
-          git add backend live .github/workflows/backend-ci.yml
+          git add backend live
           git diff --cached --check
           git commit -m 'Integrate Boot Recovery vertical slice'
           git push origin HEAD:agent/boot-recovery-management
