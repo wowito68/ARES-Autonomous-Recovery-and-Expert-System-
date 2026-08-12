@@ -15,6 +15,12 @@ The automated suite covers:
 - target disk identity revalidation before privileged mutation;
 - root `BootBroker` authorization, execution, audit completion and reconciliation-required behavior;
 - Unix broker protocol success, malformed responses, timeout, disconnect and unavailable socket failures;
+- SafeBootProcessRunner allowlisting, missing tools and bounded stdin;
+- EFI variable/entry failure paths;
+- repair-environment mount and cleanup behavior;
+- production-mode GRUB adapter BIOS/UEFI command construction and failure mapping;
+- checkpoint hashing and path-safety guards;
+- static boot-chain verification failure paths;
 - Service/Capability/Workflow/Action integration;
 - Knowledge Graph diagnosis, repair and verification projection;
 - API success, Problem Details and not-found behavior;
@@ -26,4 +32,4 @@ The automated suite covers:
 
 No destructive test is executed against the runner operating system or a developer workstation. Mutation tests use controlled temporary filesystem fixtures and ARES test-mode executors.
 
-The repository-wide coverage threshold remains 85%; Boot Recovery is not excluded and the threshold is not reduced for this increment.
+The repository-wide coverage threshold remains 85%; Boot Recovery is not excluded and the threshold is not reduced for this increment. Final exact-head test and coverage values are taken from the permanent Backend CI run rather than from temporary validation workflows.
