@@ -48,6 +48,29 @@ jobs:
               "    assert await postcheck({}, StepOutputs()) is False",
               "    assert await postcheck({}, {}) is False",
           )
+          replace(
+              service,
+              "    assert await service.verification(repair_id) == terminal.verification\n\n    snapshot = await graph.snapshot()",
+              "    assert await service.verification(repair_id) == terminal.verification\n"
+              "    for _ in range(200):\n"
+              "        if repair_id not in service._tasks:\n"
+              "            break\n"
+              "        await asyncio.sleep(0.01)\n"
+              "    assert repair_id not in service._tasks\n\n"
+              "    snapshot = await graph.snapshot()",
+          )
+          replace(
+              service,
+              '    assert verification.status.value == "PARTIAL"\n'
+              "    reconciled = await service.get(protected.repair_id)\n"
+              "    assert reconciled is not None\n"
+              "    assert reconciled.execution.status is BootRepairStatus.COMPLETED",
+              '    assert verification.status.value == "FAILED"\n'
+              "    reconciled = await service.get(protected.repair_id)\n"
+              "    assert reconciled is not None\n"
+              "    assert reconciled.execution.status is BootRepairStatus.UNKNOWN\n"
+              "    assert reconciled.execution.reconciliation_required is True",
+          )
 
           runtime = "backend/tests/test_boot_runtime_edges.py"
           replace(
@@ -60,6 +83,11 @@ jobs:
               runtime,
               "        correlation_id: str | None,\n        session_id: str | None,",
               "        correlation_id: str,\n        session_id: str,",
+          )
+          replace(
+              runtime,
+              '    assert checkpoint_payload["checkpoint"]["status"] == "READY"',
+              '    assert checkpoint_payload["checkpoint"]["status"] == "ready"',
           )
 
           api = Path("backend/tests/test_boot_api_cli_edges.py")
@@ -94,7 +122,19 @@ jobs:
           ),'''
           if old_entry not in text:
               raise SystemExit("BootEntry fixture anchor missing")
-          engine.write_text(text.replace(old_entry, new_entry, 1), encoding="utf-8")
+          text = text.replace(old_entry, new_entry, 1)
+          old_no_target = '''    no_target = diagnostic.model_copy(
+        update={"environment": diagnostic.environment.model_copy(update={"target_disk": None})}
+    )'''
+          new_no_target = '''    no_target = diagnostic.model_copy(
+        update={
+            "id": "no-target-diagnostic",
+            "environment": diagnostic.environment.model_copy(update={"target_disk": None}),
+        }
+    )'''
+          if old_no_target not in text:
+              raise SystemExit("no-target diagnostic anchor missing")
+          engine.write_text(text.replace(old_no_target, new_no_target, 1), encoding="utf-8")
           PY
           cd backend
           uv run --frozen ruff check --fix tests/test_boot_api_cli_edges.py tests/test_boot_engine_edges.py tests/test_boot_runtime_edges.py tests/test_boot_service_actions.py
