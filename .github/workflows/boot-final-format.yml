@@ -29,6 +29,7 @@ jobs:
         run: |
           python3 scripts/boot_final_fix.py
           cd backend
+          uv run --frozen ruff check --fix tests/test_boot_tool_runtime_edges.py
           uv run --frozen ruff format tests/test_boot_tool_runtime_edges.py
           uv run --frozen ruff check tests/test_boot_tool_runtime_edges.py
           uv run --frozen mypy
