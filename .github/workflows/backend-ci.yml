@@ -126,3 +126,4 @@ jobs:
           node --check live/config/includes.chroot/usr/share/ares/platform/backup.js
           node --check live/config/includes.chroot/usr/share/ares/platform/filesystem.js
           node --check live/config/includes.chroot/usr/share/ares/platform/partition.js
+          node --check live/config/includes.chroot/usr/share/ares/platform/boot.js
