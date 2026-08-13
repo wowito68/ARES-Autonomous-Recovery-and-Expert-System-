@@ -18,9 +18,18 @@ from ares.backup import (
     LocalTestBackupExecutor,
     UnixBrokerBackupExecutor,
 )
+from ares.boot import (
+    BootRecoveryEngine,
+    BootRecoveryService,
+    BootRecoveryStore,
+    BootRepairExecutor,
+    LocalTestBootExecutor,
+    UnixBrokerBootExecutor,
+)
 from ares.capabilities import CapabilityManager, discover_plugins
 from ares.capabilities.plugins import (
     BackupPlugin,
+    BootRecoveryPlugin,
     DiskAnalysisPlugin,
     FilesystemRepairPlugin,
     StoragePartitionPlugin,
@@ -61,6 +70,7 @@ from ares.tools import (
     SafeProcessRunner,
     StorageToolSuite,
 )
+from ares.tools.boot import BootRepairToolSuite
 from ares.tools.filesystem import FilesystemToolSuite, MountSafetyChecker
 from ares.tools.partition import StoragePartitionToolSuite
 from ares.workflows import WorkflowEngine
@@ -97,6 +107,7 @@ def create_app(
     checkpoint_store = ProtectionCheckpointStore(capability_state_dir / "protection/checkpoints")
     filesystem_store = FilesystemRepairStore(capability_state_dir / "filesystems")
     storage_operation_store = StorageOperationStore(capability_state_dir / "storage-operations")
+    boot_store = BootRecoveryStore(capability_state_dir / "boot")
     storage_write_gate = ProductionStorageWriteGate(
         test_mode=resolved_settings.environment is Environment.TEST
     )
@@ -111,6 +122,7 @@ def create_app(
     audit_ledger: AuditLedger
     filesystem_executor: FilesystemExecutor
     storage_operation_executor: StorageOperationExecutor
+    boot_executor: BootRepairExecutor
     if resolved_settings.environment is Environment.TEST:
         backup_executor = LocalTestBackupExecutor(backup_tools)
         audit_ledger = MemoryAuditLedger()
@@ -124,6 +136,10 @@ def create_app(
             write_gate=storage_write_gate,
         )
         storage_operation_executor = LocalTestStorageExecutor(storage_partition_tools)
+        boot_tools = BootRepairToolSuite(
+            test_mode=True, runtime_root=capability_state_dir / "boot/runtime"
+        )
+        boot_executor = LocalTestBootExecutor(boot_tools, capability_state_dir / "boot/checkpoints")
     else:
         backup_executor = UnixBrokerBackupExecutor(resolved_settings.backup_broker_socket)
         audit_ledger = UnixAuditLedgerClient(resolved_settings.audit_socket)
@@ -133,11 +149,20 @@ def create_app(
         storage_operation_executor = UnixBrokerStorageExecutor(
             resolved_settings.backup_broker_socket
         )
+        boot_tools = BootRepairToolSuite()
+        boot_executor = UnixBrokerBootExecutor(resolved_settings.backup_broker_socket)
     storage_operation_engine = StorageOperationEngine(
         executor=storage_operation_executor,
         store=storage_operation_store,
         checkpoints=checkpoint_store,
         write_gate=storage_write_gate,
+    )
+    boot_engine = BootRecoveryEngine(
+        tools=boot_tools,
+        storage=storage_operation_engine,
+        store=boot_store,
+        checkpoints=checkpoint_store,
+        executor=boot_executor,
     )
     workflow_engine = WorkflowEngine(event_bus, knowledge_graph)
     capability_manager = CapabilityManager(
@@ -149,6 +174,7 @@ def create_app(
         BackupPlugin(backup_store, backup_tools, backup_executor),
         FilesystemRepairPlugin(filesystem_store, filesystem_executor),
         StoragePartitionPlugin(storage_operation_engine, storage_operation_store),
+        BootRecoveryPlugin(boot_engine),
     )
     capability_manager.load(
         discover_plugins(
@@ -185,6 +211,12 @@ def create_app(
         event_bus=event_bus,
         audit=audit_ledger,
     )
+    boot_recovery_service = BootRecoveryService(
+        engine=boot_engine,
+        capabilities=capability_manager,
+        event_bus=event_bus,
+        audit=audit_ledger,
+    )
     filesystem_repair_service = FilesystemRepairService(
         capabilities=capability_manager,
         executor=filesystem_executor,
@@ -205,9 +237,11 @@ def create_app(
         checkpoint_store.prepare()
         filesystem_store.prepare()
         storage_operation_store.prepare()
+        boot_store.prepare()
         try:
             yield
         finally:
+            await boot_recovery_service.shutdown()
             await storage_operation_service.shutdown()
             await filesystem_repair_service.shutdown()
             await backup_service.shutdown()
@@ -255,6 +289,11 @@ def create_app(
     application.state.storage_operation_executor = storage_operation_executor
     application.state.storage_operation_engine = storage_operation_engine
     application.state.storage_operation_service = storage_operation_service
+    application.state.boot_recovery_store = boot_store
+    application.state.boot_tools = boot_tools
+    application.state.boot_executor = boot_executor
+    application.state.boot_engine = boot_engine
+    application.state.boot_recovery_service = boot_recovery_service
     application.add_middleware(RequestContextMiddleware)
     install_problem_handlers(application)
     application.include_router(api_router, prefix=resolved_settings.api_prefix)
@@ -267,6 +306,7 @@ def create_app(
             loaders = (
                 '<script src="/backup.js" defer></script>',
                 '<script src="/filesystem.js" defer></script>',
+                '<script src="/boot.js" defer></script>',
                 '<script src="/partition.js" defer></script>',
             )
             for loader in loaders:

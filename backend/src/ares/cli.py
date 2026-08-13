@@ -13,6 +13,8 @@ from fastapi import FastAPI
 
 from ares.backup import BackupCreateRequest, BackupPlanRequest, BackupService, BackupServiceError
 from ares.backup.models import BackupStatus
+from ares.boot import BootRecoveryService, BootRecoveryServiceError, BootRepairStatus
+from ares.boot.service import BootDiagnoseRequest, BootRepairPlanRequest, BootRepairRequest
 from ares.config import get_settings
 from ares.filesystems.models import RepairExecutionStatus
 from ares.filesystems.service import (
@@ -38,6 +40,12 @@ _TERMINAL_BACKUP_STATES = {
     BackupStatus.FAILED,
     BackupStatus.CANCELLED,
     BackupStatus.CORRUPTED,
+}
+_TERMINAL_BOOT_STATES = {
+    BootRepairStatus.COMPLETED,
+    BootRepairStatus.REPAIR_FAILED,
+    BootRepairStatus.ABORTED,
+    BootRepairStatus.UNKNOWN,
 }
 _TERMINAL_REPAIR_STATES = {
     RepairExecutionStatus.COMPLETED,
@@ -122,6 +130,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="verified full-filesystem backup used to create ProtectionCheckpoint",
     )
 
+    boot = commands.add_parser("boot", help="Diagnose and recover Linux boot state")
+    boot_commands = boot.add_subparsers(dest="boot_command", required=True)
+    boot_diagnose = boot_commands.add_parser("diagnose", help="Run read-only boot diagnosis")
+    boot_diagnose.add_argument("--target-disk")
+    boot_diagnose.add_argument("--root-path")
+    boot_plan = boot_commands.add_parser("plan", help="Build an evidence-bound boot repair plan")
+    boot_plan.add_argument("diagnostic_id")
+    boot_plan.add_argument("--target-os-id")
+    boot_repair = boot_commands.add_parser("repair", help="Protect and request boot repair")
+    boot_repair.add_argument("plan_id")
+    boot_status = boot_commands.add_parser("status", help="Read durable boot repair state")
+    boot_status.add_argument("repair_id")
+    boot_verify = boot_commands.add_parser("verify", help="Read boot verification evidence")
+    boot_verify.add_argument("repair_id")
+    boot_cancel = boot_commands.add_parser("cancel", help="Cancel a non-terminal boot repair")
+    boot_cancel.add_argument("repair_id")
+    boot_reconcile = boot_commands.add_parser("reconcile", help="Reinspect UNKNOWN boot state")
+    boot_reconcile.add_argument("repair_id")
+
     consent = commands.add_parser("consent", help="Trusted local approval channel")
     consent_commands = consent.add_subparsers(dest="consent_command", required=True)
     approve = consent_commands.add_parser("approve", help="Inspect and approve one challenge")
@@ -147,6 +174,8 @@ async def _main(args: argparse.Namespace) -> int:
             return await _backup_command(args, application)
         if args.command == "filesystem":
             return await _filesystem_command(args, application)
+        if args.command == "boot":
+            return await _boot_command(args, application)
     return 1
 
 
@@ -412,6 +441,117 @@ async def _filesystem_command(args: argparse.Namespace, application: FastAPI) ->
     except FilesystemServiceError as exc:
         print(f"ARES filesystem operation failed: {exc.code}", file=sys.stderr)
         return 2
+
+
+async def _boot_command(args: argparse.Namespace, application: FastAPI) -> int:
+    service = cast(BootRecoveryService, application.state.boot_recovery_service)
+    session_id = f"cli-{uuid4().hex}"
+    try:
+        if args.boot_command == "diagnose":
+            result = await service.diagnose(
+                BootDiagnoseRequest(
+                    target_disk=cast(str | None, args.target_disk),
+                    root_path=cast(str | None, args.root_path),
+                ),
+                session_id=session_id,
+            )
+            print(result.model_dump_json(indent=2))
+            return 0
+        if args.boot_command == "plan":
+            repair_plan = await service.plan(
+                BootRepairPlanRequest(
+                    diagnostic_id=cast(str, args.diagnostic_id),
+                    target_os_id=cast(str | None, args.target_os_id),
+                ),
+                session_id=session_id,
+            )
+            print(repair_plan.model_dump_json(indent=2))
+            return 0 if repair_plan.executable else 3
+        if args.boot_command == "repair":
+            stored = await service.engine.store.get_plan(cast(str, args.plan_id))
+            if stored is None:
+                print("Boot repair plan not found.", file=sys.stderr)
+                return 3
+            print("BOOT REPAIR PLAN")
+            print(stored.model_dump_json(indent=2))
+            if not stored.executable:
+                print("Boot repair plan is blocked by safety limitations.", file=sys.stderr)
+                return 4
+            confirmation = await asyncio.to_thread(
+                input,
+                "Type REQUEST to create the boot checkpoint and request "
+                "independent authorization: ",
+            )
+            if confirmation != "REQUEST":
+                print("Boot repair request cancelled before authorization.", file=sys.stderr)
+                return 4
+            accepted = await service.start(
+                BootRepairRequest(plan_id=stored.id, request_authorization=True),
+                session_id=stored.session_id,
+                created_by="local-cli-user",
+            )
+            print(accepted.model_dump_json(indent=2))
+            repair_id = accepted.repair.execution.repair_id
+            while True:
+                record = await service.get(repair_id)
+                if record is None:
+                    print("Boot repair record disappeared.", file=sys.stderr)
+                    return 5
+                challenge = record.execution.authorization_challenge_id
+                if challenge:
+                    print(
+                        "Independent authorization required. Run locally:\n"
+                        f"  ares consent approve {challenge}",
+                        file=sys.stderr,
+                    )
+                print(
+                    json.dumps(
+                        {
+                            "repair_id": repair_id,
+                            "status": record.execution.status.value,
+                            "stage": record.execution.last_known_stage,
+                            "error_code": record.execution.error_code,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    file=sys.stderr,
+                )
+                if record.execution.status in _TERMINAL_BOOT_STATES:
+                    print(record.model_dump_json(indent=2))
+                    return 0 if record.execution.status is BootRepairStatus.COMPLETED else 6
+                await asyncio.sleep(0.5)
+        repair_id = cast(str, args.repair_id)
+        record = await service.get(repair_id)
+        if args.boot_command == "status":
+            if record is None:
+                print("Boot repair not found.", file=sys.stderr)
+                return 3
+            print(record.model_dump_json(indent=2))
+            return 0
+        if args.boot_command == "verify":
+            verification = await service.verification(repair_id)
+            if verification is None:
+                print("Boot verification not found.", file=sys.stderr)
+                return 3
+            print(verification.model_dump_json(indent=2))
+            return 0
+        if record is None:
+            print("Boot repair not found.", file=sys.stderr)
+            return 3
+        if args.boot_command == "cancel":
+            cancelled = await service.cancel(repair_id, session_id=record.execution.session_id)
+            print(cancelled.model_dump_json(indent=2))
+            return 0
+        if args.boot_command == "reconcile":
+            reconciliation = await service.reconcile(
+                repair_id, session_id=record.execution.session_id
+            )
+            print(reconciliation.model_dump_json(indent=2))
+            return 0
+    except BootRecoveryServiceError as exc:
+        print(f"ARES boot recovery failed: {exc.code}", file=sys.stderr)
+        return 2
+    return 1
 
 
 async def _consent_command(args: argparse.Namespace) -> int:
