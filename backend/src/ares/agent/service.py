@@ -56,12 +56,21 @@ class AgentOrchestrator:
         catalog = await self.resources.catalog()
         selected = self._select_resource(catalog.resources, request.resource_id)
         limitations: list[str] = []
-        boot_goal = _mentions_boot(request.objective)
-        if boot_goal:
+        requested_recovery = _requested_recovery_capabilities(request.objective)
+        if _mentions_boot(request.objective) and not requested_recovery:
             limitations.append(
-                "boot.repair.grub todavía no existe; ARES puede diagnosticar evidencia "
-                "de arranque de solo lectura, pero no reparar GRUB en esta fase."
+                "boot.repair.grub (catálogo: boot.repair-grub) permanece bloqueada; "
+                "este plan solo diagnostica evidencia de arranque."
             )
+        for capability_id in requested_recovery:
+            metadata = self.capabilities.get(capability_id)
+            if metadata is None:
+                limitations.append(f"{capability_id}: capability no instalada.")
+            elif not metadata.enabled:
+                limitations.append(
+                    f"{capability_id}: "
+                    f"{metadata.disabled_reason or 'provider de ejecución no disponible.'}"
+                )
         if selected is None and request.resource_id is not None:
             raise AgentOrchestratorError("AGENT_RESOURCE_NOT_FOUND")
         if selected is None:
@@ -76,6 +85,14 @@ class AgentOrchestrator:
         steps = list(
             _diagnostic_steps(
                 request.objective,
+                target_resource_id=selected.resource_id if selected else None,
+                evidence_ids=tuple(item.id for item in evidence),
+            )
+        )
+        steps.extend(
+            _recovery_steps(
+                requested_recovery,
+                capabilities=self.capabilities,
                 target_resource_id=selected.resource_id if selected else None,
                 evidence_ids=tuple(item.id for item in evidence),
             )
@@ -127,11 +144,20 @@ class AgentOrchestrator:
             return await self._invalidate(run, session_id, "selected_resource_identity_changed")
         authorization = ReadOnlyAuthorization(
             run_id=run.id,
-            step_ids=tuple(step.id for step in run.steps if step.requires_authorization),
+            step_ids=tuple(
+                step.id
+                for step in run.steps
+                if step.requires_authorization
+                and step.action is not None
+                and step.action.operation_class == "observe"
+            ),
             capability_ids=tuple(
                 step.capability_id
                 for step in run.steps
-                if step.requires_authorization and step.capability_id is not None
+                if step.requires_authorization
+                and step.capability_id is not None
+                and step.action is not None
+                and step.action.operation_class == "observe"
             ),
             resource_fingerprints=((selected.stable_identity,) if selected is not None else ()),
             granted_by=operator,
@@ -142,7 +168,7 @@ class AgentOrchestrator:
         )
         steps = tuple(
             step.model_copy(update={"state": AgentStepState.AUTHORIZED})
-            if step.requires_authorization
+            if step.id in authorization.step_ids
             else step
             for step in run.steps
         )
@@ -564,6 +590,138 @@ def _requested_capabilities(objective: str) -> tuple[str, ...]:
         if comprehensive or any(term in lowered for term in terms):
             requested.append(capability_id)
     return tuple(requested)
+
+
+def _requested_recovery_capabilities(objective: str) -> tuple[str, ...]:
+    lowered = objective.casefold()
+    requested: list[str] = []
+    groups = (
+        (
+            "boot.repair-grub",
+            ("reparar grub", "reinstalar grub", "regenerar grub", "grub roto"),
+        ),
+        (
+            "boot.repair-efi-entry",
+            ("reparar entrada efi", "reparar uefi", "entrada uefi", "bootorder"),
+        ),
+        (
+            "boot.rebuild-initramfs",
+            ("reconstruir initramfs", "regenerar initramfs", "rebuild initramfs"),
+        ),
+        (
+            "boot.repair-fstab",
+            ("reparar fstab", "corregir fstab", "fstab inválido", "fstab invalido"),
+        ),
+        (
+            "kernel.rollback",
+            ("rollback kernel", "volver al kernel", "kernel anterior", "último kernel funcional"),
+        ),
+        (
+            "kernel.reinstall",
+            ("reinstalar kernel", "reparar kernel", "reinstalar módulos del kernel"),
+        ),
+        (
+            "packages.rollback",
+            (
+                "rollback paquete",
+                "revertir actualización",
+                "revertir actualizacion",
+                "deshacer actualización",
+                "deshacer actualizacion",
+            ),
+        ),
+        (
+            "services.restore-configuration",
+            (
+                "restaurar configuración del servicio",
+                "restaurar configuracion del servicio",
+                "recuperar configuración del servicio",
+            ),
+        ),
+        (
+            "network.restore-configuration",
+            (
+                "restaurar red",
+                "restaurar configuración de red",
+                "recuperar configuración de red",
+            ),
+        ),
+        (
+            "files.recover",
+            ("recuperar archivos borrados", "recuperar archivo borrado", "undelete"),
+        ),
+        (
+            "system.rollback-checkpoint",
+            ("rollback checkpoint", "restaurar checkpoint", "volver al checkpoint"),
+        ),
+        (
+            "user.account-recovery",
+            (
+                "recuperar cuenta",
+                "recuperar contraseña",
+                "recuperar contrasena",
+                "desbloquear usuario",
+            ),
+        ),
+    )
+    for capability_id, terms in groups:
+        if any(term in lowered for term in terms):
+            requested.append(capability_id)
+    return tuple(requested)
+
+
+def _recovery_steps(
+    requested: tuple[str, ...],
+    *,
+    capabilities: Any,
+    target_resource_id: str | None,
+    evidence_ids: tuple[str, ...],
+) -> tuple[AgentPlanStep, ...]:
+    steps: list[AgentPlanStep] = []
+    for index, capability_id in enumerate(requested, start=1):
+        metadata = capabilities.get(capability_id)
+        if metadata is None:
+            continue
+        steps.append(
+            AgentPlanStep(
+                id=f"recovery-{index}-{capability_id.replace('.', '-').replace('_', '-')}",
+                objective=metadata.objective,
+                state=AgentStepState.BLOCKED,
+                capability_id=capability_id,
+                target_resource_id=target_resource_id,
+                prerequisites=(
+                    "Diagnóstico y target exacto verificados por ARES.",
+                    "ProtectionCheckpoint READY ligado al fingerprint del target.",
+                    "Autorización de mutación de un solo uso ligada al plan.",
+                    "Broker privilegiado específico instalado y saludable.",
+                    f"Evidencia requerida: {', '.join(metadata.required_evidence)}.",
+                ),
+                risk=metadata.risk.value,
+                requires_authorization=True,
+                requires_protection=True,
+                action=TechnicalAction(
+                    capability_id=capability_id,
+                    operation_class=metadata.operation.value,
+                    risk=metadata.risk.value,
+                    privileged=True,
+                    command_summary=(
+                        "Revalidar fingerprint, plan y checkpoint en backend.",
+                        "Solicitar autorización contextual para la mutación exacta.",
+                        "Delegar únicamente al broker dedicado y verificar el resultado.",
+                    ),
+                    expected_changes=metadata.description,
+                ),
+                expected_result=(
+                    "Resultado tipado con cambios, evidencia de verificación y rollback."
+                ),
+                verification="Los postchecks declarados deben completarse antes de reportar éxito.",
+                rollback_strategy=metadata.rollback.strategy,
+                dependencies=metadata.dependencies,
+                evidence=evidence_ids,
+                error_code="RECOVERY_PROVIDER_UNAVAILABLE",
+            )
+        )
+    return tuple(steps)
 
 
 def _capability_payload(

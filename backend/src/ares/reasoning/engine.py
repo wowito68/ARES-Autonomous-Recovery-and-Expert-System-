@@ -91,6 +91,15 @@ class ReasoningEngine:
             statement=f"The goal may be addressed by capability {capability_id}.",
             confidence=confidence,
         )
+        if not selected_metadata.enabled:
+            return ReasoningAssessment(
+                status=ReasoningStatus.STOPPED,
+                hypotheses=(hypothesis,),
+                stop_reason=(
+                    selected_metadata.disabled_reason
+                    or "The selected capability is installed but unavailable."
+                ),
+            )
         available = {fact.id for fact in request.evidence if fact.confidence >= 0.5}
         missing = tuple(
             item for item in selected_metadata.required_evidence if item not in available

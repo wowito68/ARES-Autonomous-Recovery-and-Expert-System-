@@ -43,6 +43,13 @@ class PublicCapability(BaseModel):
     plugin_id: str
     plugin_version: str
     active: bool
+    enabled: bool
+    disabled_reason: str | None
+    requires_authorization: bool
+    requires_protection_checkpoint: bool
+    supports_dry_run: bool
+    supports_verification: bool
+    supports_rollback: bool
 
     @classmethod
     def from_descriptor(cls, descriptor: CapabilityDescriptor) -> PublicCapability:
@@ -70,6 +77,13 @@ class PublicCapability(BaseModel):
             plugin_id=descriptor.plugin_id,
             plugin_version=descriptor.plugin_version,
             active=descriptor.active,
+            enabled=metadata.enabled,
+            disabled_reason=metadata.disabled_reason,
+            requires_authorization=metadata.requires_authorization,
+            requires_protection_checkpoint=metadata.requires_protection_checkpoint,
+            supports_dry_run=metadata.supports_dry_run,
+            supports_verification=metadata.supports_verification,
+            supports_rollback=metadata.supports_rollback,
         )
 
 
@@ -232,6 +246,13 @@ async def execute_capability(
         raise _not_found()
     try:
         record = await manager.execute(capability_id, payload, version=version)
+    except PermissionError as exc:
+        raise AresProblem(
+            status=409,
+            code="CAPABILITY_DISABLED",
+            title="Capability is not executable",
+            detail=str(exc),
+        ) from exc
     except ValidationError as exc:
         errors = []
         for error in exc.errors():
