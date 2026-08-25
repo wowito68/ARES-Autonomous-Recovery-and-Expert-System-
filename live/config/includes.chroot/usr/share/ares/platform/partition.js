@@ -75,6 +75,10 @@
 
     const form = el("form", "planner-form");
     form.id = "partition-plan-form";
+    const resource = el("select");
+    resource.id = "partition-target-resource";
+    resource.setAttribute("aria-label", "Disco detectado por ARES");
+    resource.title = "Disco detectado por ARES";
     const disk = el("input");
     disk.id = "partition-target";
     disk.placeholder = "/var/lib/ares/storage-images/test.img";
@@ -122,7 +126,7 @@
     inspect.id = "partition-inspect";
     const plan = el("button", "", "Generate plan");
     plan.type = "submit";
-    form.append(disk, operation, number, size, newSize, newStart, tableType, inspect, plan);
+    form.append(resource, disk, operation, number, size, newSize, newStart, tableType, inspect, plan);
 
     const controls = el("div", "topbar-actions");
     const validate = el("button", "secondary-button", "Validate + Dry Run + Protect");
@@ -382,7 +386,21 @@
     result?.prepend(el("p", "banner warning", `${error.code || "ERROR"}: ${error.message}`));
   }
 
+  async function wireResourceSelector() {
+    if (!window.AresResources) return;
+    try {
+      await window.AresResources.fillSelect("partition-target-resource", {
+        kinds: ["disk"],
+        blankLabel: "Selecciona disco detectado o usa imagen manual",
+      });
+      window.AresResources.bindPath("partition-target-resource", "partition-target");
+    } catch (_) {
+      // Las imágenes/rutas manuales siguen siendo el flujo seguro por defecto.
+    }
+  }
+
   ensureSection();
+  wireResourceSelector();
   document.getElementById("partition-inspect")?.addEventListener("click", () => inspectLayout().catch(report));
   document.getElementById("partition-plan-form")?.addEventListener("submit", (event) => planOperation(event).catch(report));
   document.getElementById("partition-validate")?.addEventListener("click", () => validateOperation().catch(report));

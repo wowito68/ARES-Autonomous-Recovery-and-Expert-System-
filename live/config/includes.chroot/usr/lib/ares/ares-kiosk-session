@@ -23,5 +23,8 @@ fi
 if command -v xfdesktop >/dev/null 2>&1; then
     xfdesktop >> "${log_file}" 2>&1 &
 fi
+if [ -x /usr/lib/ares/ares-terminal-watcher ]; then
+    /usr/lib/ares/ares-terminal-watcher >> "${log_file}" 2>&1 &
+fi
 
 exec /usr/lib/ares/ares-kiosk-launch

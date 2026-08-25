@@ -1,0 +1,21 @@
+#!/bin/sh
+set -eu
+
+request_dir=/run/ares/terminal
+log_file=${XDG_RUNTIME_DIR:-/tmp}/ares-terminal-watcher.log
+mkdir -p "${request_dir}" 2>/dev/null || true
+
+printf 'ARES terminal watcher starting: display=%s uid=%s\n' \
+    "${DISPLAY:-missing}" "$(id -u)" > "${log_file}" 2>/dev/null || true
+
+while :; do
+    for request in "${request_dir}"/*.json; do
+        [ -e "${request}" ] || continue
+        processing="${request}.processing"
+        if mv "${request}" "${processing}" 2>/dev/null; then
+            /usr/lib/ares/ares-open-terminal "${processing}" >> "${log_file}" 2>&1 || true
+            rm -f -- "${processing}"
+        fi
+    done
+    sleep 1
+done

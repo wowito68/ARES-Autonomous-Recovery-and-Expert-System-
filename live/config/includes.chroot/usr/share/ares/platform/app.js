@@ -509,7 +509,7 @@ async function sendChat(event) {
     const messages = {
       AI_MODEL_MISSING: "El modelo configurado no está instalado en esta imagen.",
       AI_RUNTIME_UNAVAILABLE:
-        "El runtime local no respondió. Espera unos segundos y pulsa Actualizar; si persiste, revisa /run/ares/ai-selftest.json.",
+        "El runtime local no respondió. Espera unos segundos y pulsa Actualizar; si persiste, revisa /run/ares/api/ai-selftest.json.",
       AI_INVALID_RESPONSE:
         "El modelo respondió, pero ARES descartó la respuesta por seguridad.",
     };

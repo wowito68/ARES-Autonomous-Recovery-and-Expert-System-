@@ -77,6 +77,13 @@ veritysetup verify \
 unsquashfs -ll "${temp_dir}/filesystem.squashfs" > "${temp_dir}/squashfs.list"
 for runtime_path in \
     opt/ares/backend/src/ares/main.py \
+    opt/ares/backend/src/ares/agent/service.py \
+    opt/ares/backend/src/ares/api/routes/agent.py \
+    opt/ares/backend/src/ares/api/routes/boot.py \
+    opt/ares/backend/src/ares/api/routes/resources.py \
+    opt/ares/backend/src/ares/boot/models.py \
+    opt/ares/backend/src/ares/actions/boot.py \
+    opt/ares/backend/src/ares/capabilities/plugins/boot_diagnostics.py \
     opt/ares/backend/src/ares/capabilities/discovery.py \
     opt/ares/backend/src/ares/capabilities/manager.py \
     opt/ares/backend/src/ares/capabilities/plugins/disk_analysis.py \
@@ -85,6 +92,11 @@ for runtime_path in \
     opt/ares/backend/src/ares/knowledge/graph.py \
     opt/ares/backend/src/ares/planner/engine.py \
     opt/ares/backend/src/ares/reasoning/engine.py \
+    opt/ares/backend/src/ares/runtime/terminal_broker.py \
+    opt/ares/backend/src/ares/terminal/executor.py \
+    opt/ares/backend/src/ares/terminal/models.py \
+    opt/ares/backend/src/ares/terminal/service.py \
+    opt/ares/backend/src/ares/terminal/store.py \
     opt/ares/llm/bin/ares-llm \
     opt/ares/llm/runtime/bin/ollama \
     usr/share/ares/ai/BUNDLE.json \
@@ -93,9 +105,14 @@ for runtime_path in \
     usr/lib/ares/ares-hardware-boot \
     usr/lib/ares/ares-kiosk-launch \
     usr/lib/ares/ares-kiosk-session \
+    usr/lib/ares/ares-open-terminal \
+    usr/lib/ares/ares-terminal-watcher \
     usr/share/xsessions/ares-kiosk.desktop \
     usr/share/ares/platform/index.html \
     usr/share/ares/platform/app.js \
+    usr/share/ares/platform/resources.js \
+    usr/share/ares/platform/agent.js \
+    usr/share/ares/platform/session.js \
     usr/share/ares/platform/unavailable.html; do
     grep -Fq "squashfs-root/${runtime_path}" "${temp_dir}/squashfs.list" \
         || { printf 'Required runtime path is missing from SquashFS: /%s\n' "${runtime_path}" >&2; exit 1; }
@@ -129,7 +146,7 @@ grep -qx 'Environment=ARES_CAPABILITY_STATE_DIR=/var/lib/ares/capabilities' \
 grep -qx 'ReadOnlyPaths=/run/ares/hardware/public' \
     "${temp_dir}/ares-backend.service" \
     || { printf '%s\n' 'The ISO backend hardware evidence path is not read-only.' >&2; exit 1; }
-grep -qx 'ReadWritePaths=/var/lib/ares /run/ares/api' \
+grep -qx 'ReadWritePaths=/var/lib/ares /run/ares/api /run/ares/terminal' \
     "${temp_dir}/ares-backend.service" \
     || { printf '%s\n' 'The ISO backend write paths are not confined.' >&2; exit 1; }
 grep -qx 'Environment=ARES_AI_MODEL=qwen2.5:1.5b-instruct-q4_K_M' \
@@ -164,6 +181,15 @@ grep -Fqx 'd /var/lib/ares/capabilities 0700 ares-api ares-api -' \
 grep -Fqx 'd /var/lib/ares 0711 ares-api ares-api -' \
     "${temp_dir}/ares.tmpfiles" \
     || { printf '%s\n' 'The ISO state root blocks isolated service traversal.' >&2; exit 1; }
+grep -Fqx 'd /run/ares/terminals 0700 root root -' \
+    "${temp_dir}/ares.tmpfiles" \
+    || { printf '%s\n' 'The ISO lacks the root-owned terminal runtime directory.' >&2; exit 1; }
+unsquashfs -cat "${temp_dir}/filesystem.squashfs" \
+    usr/lib/systemd/system/ares-tool-broker.service > "${temp_dir}/ares-tool-broker.service"
+grep -Fq '/run/ares/terminals' "${temp_dir}/ares-tool-broker.service" \
+    || { printf '%s\n' 'The ISO broker cannot manage contextual terminal runtime state.' >&2; exit 1; }
+grep -Fq 'CapabilityBoundingSet=CAP_SYS_ADMIN' "${temp_dir}/ares-tool-broker.service" \
+    || { printf '%s\n' 'The ISO broker lacks the bounded mount capability.' >&2; exit 1; }
 if unsquashfs -ll "${temp_dir}/filesystem.squashfs" var/lib/ares/models 2>/dev/null \
     | awk '$NF ~ "^squashfs-root/var/lib/ares/models(/|$)" && $2 != "977/977" { found=1 } END { exit found ? 0 : 1 }'; then
     printf '%s\n' 'The ISO model store is not recursively owned by ares-llm.' >&2
@@ -179,6 +205,22 @@ if grep -Eq '(^|[,{[:space:]])command[[:space:]]*:' "${temp_dir}/app.js"; then
     printf '%s\n' 'The ISO interface sends forbidden command input to a capability.' >&2
     exit 1
 fi
+unsquashfs -cat "${temp_dir}/filesystem.squashfs" \
+    usr/share/ares/platform/session.js > "${temp_dir}/session.js"
+grep -Fq '/system/terminal/plans' "${temp_dir}/session.js" \
+    || { printf '%s\n' 'The ISO interface does not use exact terminal plans.' >&2; exit 1; }
+if grep -Fq '/system/terminal/open' "${temp_dir}/session.js"; then
+    printf '%s\n' 'The ISO interface still calls the obsolete direct terminal-open endpoint.' >&2
+    exit 1
+fi
+unsquashfs -cat "${temp_dir}/filesystem.squashfs" \
+    usr/lib/ares/ares-open-terminal > "${temp_dir}/ares-open-terminal"
+grep -Fq 'installed_system_read_only' "${temp_dir}/ares-open-terminal" \
+    || { printf '%s\n' 'The ISO terminal opener lacks the read-only installed-system mode.' >&2; exit 1; }
+grep -Fq '/usr/bin/bwrap --unshare-all' "${temp_dir}/ares-open-terminal" \
+    || { printf '%s\n' 'The ISO terminal opener does not enter a private namespace.' >&2; exit 1; }
+grep -Fq 'squashfs-root/usr/bin/bwrap' "${temp_dir}/squashfs.list" \
+    || { printf '%s\n' 'The ISO does not include bubblewrap.' >&2; exit 1; }
 unsquashfs -cat "${temp_dir}/filesystem.squashfs" \
     etc/lightdm/lightdm.conf.d/50-ares.conf > "${temp_dir}/lightdm.conf"
 grep -qx 'autologin-session=ares-kiosk' "${temp_dir}/lightdm.conf" \

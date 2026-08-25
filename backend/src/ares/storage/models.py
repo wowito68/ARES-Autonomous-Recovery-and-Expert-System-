@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ares.tools import StorageEvidence, ToolAvailability
+from ares.tools.storage import StorageEvidence, ToolAvailability
 
 
 class StorageHealth(StrEnum):

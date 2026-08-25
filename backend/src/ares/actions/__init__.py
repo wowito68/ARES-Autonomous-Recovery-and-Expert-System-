@@ -11,6 +11,7 @@ from ares.actions.backup import (
     VerifyBackupAction,
 )
 from ares.actions.base import Action, ActionContext, ActionError
+from ares.actions.boot import DiagnoseBootAction
 from ares.actions.disk import (
     AnalyzeDiskInventoryAction,
     ReadDiskInventoryAction,
@@ -39,6 +40,7 @@ __all__ = [
     "BuildStorageSnapshotAction",
     "CollectStorageEvidenceAction",
     "CreateBackupFilesAction",
+    "DiagnoseBootAction",
     "ExecuteFilesystemRepairAction",
     "ListBackupsAction",
     "LoadBackupForVerificationAction",

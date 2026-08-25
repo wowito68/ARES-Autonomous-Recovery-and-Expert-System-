@@ -10,6 +10,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from ares.api.router import api_router
+from ares.agent import AgentOrchestrator, AgentRunStore
 from ares.audit import AuditLedger, MemoryAuditLedger, UnixAuditLedgerClient
 from ares.backup import (
     BackupExecutor,
@@ -21,6 +22,7 @@ from ares.backup import (
 from ares.capabilities import CapabilityManager, discover_plugins
 from ares.capabilities.plugins import (
     BackupPlugin,
+    BootDiagnosticsPlugin,
     DiskAnalysisPlugin,
     FilesystemRepairPlugin,
     StoragePartitionPlugin,
@@ -44,6 +46,8 @@ from ares.llm import AIRuntime, OllamaRuntime
 from ares.planner import Planner
 from ares.protection import ProtectionCheckpointService, ProtectionCheckpointStore
 from ares.reasoning import ReasoningEngine
+from ares.resources.service import ResourceResolver
+from ares.session import SystemSessionService
 from ares.storage.service import StorageAnalysisService
 from ares.storage.store import StorageSnapshotStore
 from ares.storage_operations import (
@@ -54,6 +58,12 @@ from ares.storage_operations import (
     StorageOperationService,
     StorageOperationStore,
     UnixBrokerStorageExecutor,
+)
+from ares.terminal import (
+    LocalTestTerminalExecutor,
+    TerminalService,
+    TerminalStore,
+    UnixBrokerTerminalExecutor,
 )
 from ares.tools import (
     BackupFilesystemTools,
@@ -97,6 +107,8 @@ def create_app(
     checkpoint_store = ProtectionCheckpointStore(capability_state_dir / "protection/checkpoints")
     filesystem_store = FilesystemRepairStore(capability_state_dir / "filesystems")
     storage_operation_store = StorageOperationStore(capability_state_dir / "storage-operations")
+    agent_run_store = AgentRunStore(capability_state_dir / "agent/runs")
+    terminal_store = TerminalStore(capability_state_dir / "terminal")
     storage_write_gate = ProductionStorageWriteGate(
         test_mode=resolved_settings.environment is Environment.TEST
     )
@@ -124,6 +136,7 @@ def create_app(
             write_gate=storage_write_gate,
         )
         storage_operation_executor = LocalTestStorageExecutor(storage_partition_tools)
+        terminal_executor = LocalTestTerminalExecutor()
     else:
         backup_executor = UnixBrokerBackupExecutor(resolved_settings.backup_broker_socket)
         audit_ledger = UnixAuditLedgerClient(resolved_settings.audit_socket)
@@ -133,6 +146,7 @@ def create_app(
         storage_operation_executor = UnixBrokerStorageExecutor(
             resolved_settings.backup_broker_socket
         )
+        terminal_executor = UnixBrokerTerminalExecutor(resolved_settings.backup_broker_socket)
     storage_operation_engine = StorageOperationEngine(
         executor=storage_operation_executor,
         store=storage_operation_store,
@@ -146,6 +160,7 @@ def create_app(
     )
     builtins = (
         DiskAnalysisPlugin(storage_tools, snapshot_store),
+        BootDiagnosticsPlugin(snapshot_store),
         BackupPlugin(backup_store, backup_tools, backup_executor),
         FilesystemRepairPlugin(filesystem_store, filesystem_executor),
         StoragePartitionPlugin(storage_operation_engine, storage_operation_store),
@@ -168,6 +183,25 @@ def create_app(
         event_bus,
         storage_tools,
         inventory_path,
+    )
+    resource_resolver = ResourceResolver(snapshot_store)
+    terminal_service = TerminalService(
+        settings=resolved_settings,
+        resources=resource_resolver,
+        store=terminal_store,
+        executor=terminal_executor,
+        audit=audit_ledger,
+    )
+    system_session_service = SystemSessionService(
+        resolved_settings, resource_resolver, terminal_service
+    )
+    agent_orchestrator = AgentOrchestrator(
+        store=agent_run_store,
+        resources=resource_resolver,
+        planner=planner,
+        capabilities=capability_manager,
+        storage=storage_analysis_service,
+        events=event_bus,
     )
     backup_service = BackupService(
         capability_manager,
@@ -205,6 +239,8 @@ def create_app(
         checkpoint_store.prepare()
         filesystem_store.prepare()
         storage_operation_store.prepare()
+        agent_run_store.prepare()
+        terminal_store.prepare()
         try:
             yield
         finally:
@@ -239,6 +275,13 @@ def create_app(
     application.state.diagnostic_store = diagnostic_store
     application.state.storage_tools = storage_tools
     application.state.storage_analysis_service = storage_analysis_service
+    application.state.resource_resolver = resource_resolver
+    application.state.system_session_service = system_session_service
+    application.state.agent_run_store = agent_run_store
+    application.state.agent_orchestrator = agent_orchestrator
+    application.state.terminal_store = terminal_store
+    application.state.terminal_executor = terminal_executor
+    application.state.terminal_service = terminal_service
     application.state.backup_store = backup_store
     application.state.backup_tools = backup_tools
     application.state.backup_executor = backup_executor

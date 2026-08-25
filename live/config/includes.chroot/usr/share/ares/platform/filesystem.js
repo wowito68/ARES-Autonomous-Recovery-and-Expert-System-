@@ -43,6 +43,12 @@
 
     const form = element("form", "filesystem-form");
     form.id = "filesystem-inspect-form";
+
+    const resourceLabel = element("label", "", "Filesystem detectado por ARES");
+    const resource = element("select", "");
+    resource.id = "filesystem-resource";
+    resourceLabel.append(resource);
+
     const targetLabel = element("label", "", "Dispositivo exacto");
     const target = element("input", "");
     target.id = "filesystem-device";
@@ -64,7 +70,7 @@
     planButton.type = "button";
     planButton.id = "filesystem-plan-button";
     planButton.disabled = true;
-    form.append(targetLabel, backupLabel, inspectButton, planButton);
+    form.append(resourceLabel, targetLabel, backupLabel, inspectButton, planButton);
 
     const inspection = element("div", "filesystem-inspection");
     inspection.id = "filesystem-inspection";
@@ -88,7 +94,21 @@
       link.href = "#filesystems-section";
       nav.append(link);
     }
+    wireResourceSelector();
     return section;
+  }
+
+  async function wireResourceSelector() {
+    if (!window.AresResources) return;
+    try {
+      await window.AresResources.fillSelect("filesystem-resource", {
+        kinds: ["filesystem", "partition"],
+        blankLabel: "Selecciona filesystem o usa dispositivo manual",
+      });
+      window.AresResources.bindPath("filesystem-resource", "filesystem-device");
+    } catch (_) {
+      // El campo técnico se conserva como respaldo offline/manual.
+    }
   }
 
   async function requestJson(url, options = {}) {

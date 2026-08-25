@@ -1,0 +1,98 @@
+#!/bin/sh
+set -eu
+
+request=${1:-}
+[ -n "${request}" ] || exit 2
+[ -f "${request}" ] || exit 2
+
+context=$(python3 - "$request" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    data = json.load(handle)
+print(data.get("context", "ares_recovery"))
+PY
+)
+label=$(python3 - "$request" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    data = json.load(handle)
+print(data.get("label", "Terminal ARES"))
+PY
+)
+privilege=$(python3 - "$request" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    data = json.load(handle)
+print(data.get("privilege", "usuario ares"))
+PY
+)
+source_path=$(python3 - "$request" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    data = json.load(handle)
+print(data.get("source_path", ""))
+PY
+)
+control_dir=$(python3 - "$request" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    data = json.load(handle)
+print(data.get("control_dir", ""))
+PY
+)
+
+case "${context}" in
+    ares_recovery|ares_local|read_only|installed_system_read_only) ;;
+    *) exit 3 ;;
+esac
+
+if [ -n "${control_dir}" ]; then
+    mkdir -p "${control_dir}" 2>/dev/null || true
+fi
+
+header=$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/ares-terminal-header.XXXXXX")
+if [ "${context}" = "installed_system_read_only" ]; then
+cat > "${header}" <<EOF
+printf '\\033[1;36mARES Installed System Terminal\\033[0m\\n'
+printf 'Contexto: %s\\n' '${label}'
+printf 'Acceso: %s\\n' '${privilege}'
+printf 'Raíz instalada: /mnt/installed-system (solo lectura dentro de namespace privado).\\n'
+printf 'Control: comandos manuales del usuario; el LLM no puede leer ni controlar esta terminal.\\n'
+printf 'Seguridad: no se ejecutan binarios del sistema instalado por diseño; usa herramientas del Live.\\n'
+printf '\\n'
+cd /mnt/installed-system
+exec /bin/bash --noprofile --norc
+EOF
+else
+cat > "${header}" <<EOF
+printf '\\033[1;36mARES Recovery Terminal\\033[0m\\n'
+printf 'Contexto: %s\\n' '${label}'
+printf 'Acceso: %s\\n' '${privilege}'
+printf 'Control: comandos manuales del usuario; el LLM no puede leer ni controlar esta terminal.\\n'
+printf 'Auditoría: apertura solicitada por ARES; los comandos manuales no son ejecución del asistente.\\n'
+printf '\\n'
+cd "\${HOME:-/home/ares}"
+exec /bin/bash -l
+EOF
+fi
+chmod 0600 "${header}"
+
+if [ "${context}" = "installed_system_read_only" ]; then
+    [ -n "${source_path}" ] || exit 5
+    [ -d "${source_path}" ] || exit 5
+    command="/usr/bin/bwrap --unshare-all --die-with-parent --new-session --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind /lib /lib --ro-bind /lib64 /lib64 --ro-bind /etc /etc --proc /proc --dev /dev --tmpfs /tmp --tmpfs /run --ro-bind '${header}' /run/ares-terminal-header --ro-bind '${source_path}' /mnt/installed-system --chdir /mnt/installed-system /bin/bash --rcfile /run/ares-terminal-header"
+else
+    command="/bin/sh ${header}"
+fi
+
+if command -v xfce4-terminal >/dev/null 2>&1; then
+    setsid xfce4-terminal --disable-server --title="ARES · ${label}" --command="${command}" &
+elif command -v xterm >/dev/null 2>&1; then
+    setsid xterm -T "ARES · ${label}" -e /bin/sh -c "${command}" &
+else
+    exit 4
+fi
+launcher_pid=$!
+if [ -n "${control_dir}" ]; then
+    printf '%s\n' "${launcher_pid}" > "${control_dir}/launcher.pid" 2>/dev/null || true
+fi

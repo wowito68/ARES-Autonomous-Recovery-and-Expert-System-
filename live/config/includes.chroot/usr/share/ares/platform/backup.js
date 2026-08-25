@@ -55,6 +55,12 @@
 
     const form = element("form", "backup-form");
     form.id = "backup-plan-form";
+
+    const sourceResourceLabel = element("label", "", "Origen detectado por ARES");
+    const sourceResource = element("select", "");
+    sourceResource.id = "backup-source-resource";
+    sourceResourceLabel.append(sourceResource);
+
     const sourceLabel = element("label", "", "Origen");
     const source = element("input", "");
     source.id = "backup-source";
@@ -63,6 +69,11 @@
     source.placeholder = "/mnt/windows/Users/.../Documents";
     source.autocomplete = "off";
     sourceLabel.append(source);
+
+    const destinationResourceLabel = element("label", "", "Destino detectado por ARES");
+    const destinationResource = element("select", "");
+    destinationResource.id = "backup-destination-resource";
+    destinationResourceLabel.append(destinationResource);
 
     const destinationLabel = element("label", "", "Destino montado");
     const destination = element("input", "");
@@ -76,7 +87,7 @@
     const analyze = element("button", "", "Analizar y generar plan");
     analyze.type = "submit";
     analyze.id = "backup-analyze";
-    form.append(sourceLabel, destinationLabel, analyze);
+    form.append(sourceResourceLabel, sourceLabel, destinationResourceLabel, destinationLabel, analyze);
 
     const plan = element("div", "backup-plan");
     plan.id = "backup-plan";
@@ -101,7 +112,26 @@
       link.href = "#backups-section";
       nav.append(link);
     }
+    wireResourceSelectors();
     return section;
+  }
+
+  async function wireResourceSelectors() {
+    if (!window.AresResources) return;
+    try {
+      await window.AresResources.fillSelect("backup-source-resource", {
+        kinds: ["operating_system", "mount", "filesystem", "partition"],
+        blankLabel: "Selecciona origen o usa ruta manual",
+      });
+      await window.AresResources.fillSelect("backup-destination-resource", {
+        kinds: ["mount", "disk", "partition"],
+        blankLabel: "Selecciona destino o usa ruta manual",
+      });
+      window.AresResources.bindPath("backup-source-resource", "backup-source");
+      window.AresResources.bindPath("backup-destination-resource", "backup-destination");
+    } catch (_) {
+      // La ruta técnica manual sigue disponible cuando el catálogo no esté listo.
+    }
   }
 
   function row(label, value) {

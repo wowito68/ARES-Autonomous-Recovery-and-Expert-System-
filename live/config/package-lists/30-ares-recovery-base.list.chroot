@@ -1,4 +1,5 @@
 btrfs-progs
+cryptsetup
 cryptsetup-bin
 dosfstools
 e2fsprogs

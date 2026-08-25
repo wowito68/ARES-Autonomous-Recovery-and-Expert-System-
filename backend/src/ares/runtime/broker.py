@@ -28,6 +28,7 @@ from ares.protection import ProtectionCheckpointStore
 from ares.runtime.consent import UnixConsentClient
 from ares.runtime.filesystem_broker import FilesystemBroker
 from ares.runtime.storage_broker import StorageBroker
+from ares.runtime.terminal_broker import TerminalBroker, TerminalBrokerError
 from ares.storage_operations.policy import ProductionStorageWriteGate
 from ares.storage_operations.store import StorageOperationStore
 from ares.tools.backup import BackupFilesystemTools, BackupToolError
@@ -296,6 +297,7 @@ async def serve_tool_broker(
         storage_operation_store,
         write_gate=storage_write_gate,
     )
+    terminal_broker = TerminalBroker(audit)
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         async def send(message: dict[str, Any]) -> None:
@@ -318,6 +320,8 @@ async def serve_tool_broker(
                 result = await filesystem_broker.dispatch(request, peer_uid, send)
             elif isinstance(action, str) and action.startswith("storage."):
                 result = await storage_broker.dispatch(request, peer_uid, send)
+            elif isinstance(action, str) and action.startswith("terminal."):
+                result = await terminal_broker.dispatch(request, peer_uid, send)
             else:
                 result = await backup_broker.dispatch(request, peer_uid, send)
             await send({"type": "result", "payload": result})
@@ -375,6 +379,8 @@ def _safe_code(exc: BaseException) -> str:
     if isinstance(exc, FilesystemToolError):
         return exc.code
     if isinstance(exc, PartitionToolError):
+        return exc.code
+    if isinstance(exc, TerminalBrokerError):
         return exc.code
     if isinstance(exc, AuditLedgerError):
         return "AUDIT_LEDGER_UNAVAILABLE"

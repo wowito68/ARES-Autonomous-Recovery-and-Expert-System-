@@ -119,7 +119,15 @@ case "${ARES_REUSE_BUILDER:-0}" in
     0)
         printf 'Building pinned ARES builder (%s)...\n' "${builder_image}"
         if [ "${engine}" = "docker" ]; then
-            "${engine}" build --load \
+            docker_build_load=
+            if "${engine}" build --help 2>/dev/null | grep -q -- '--load'; then
+                docker_build_load=--load
+            fi
+            # Docker's legacy builder loads into the local image store by default,
+            # while BuildKit/buildx exposes an explicit --load flag. Support both
+            # so the reproducible builder works on stock Ubuntu docker.io and on
+            # newer Docker Desktop/BuildKit environments.
+            "${engine}" build ${docker_build_load:+"${docker_build_load}"} \
                 --file "${repo_root}/live/Dockerfile.build" \
                 --build-arg "DEBIAN_IMAGE=${ARES_BASE_IMAGE}" \
                 --build-arg "DEBIAN_SNAPSHOT=${ARES_DEBIAN_SNAPSHOT}" \

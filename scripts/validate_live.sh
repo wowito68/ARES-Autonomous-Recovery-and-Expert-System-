@@ -32,6 +32,7 @@ for required in \
     live/config/includes.chroot/opt/ares/backend/bin/ares-api \
     live/config/includes.chroot/opt/ares/llm/bin/ares-llm \
     live/config/includes.chroot/usr/share/ares/platform/app.js \
+    live/config/includes.chroot/usr/share/ares/platform/resources.js \
     live/config/includes.chroot/usr/share/ares/platform/unavailable.html \
     live/config/includes.chroot/usr/lib/systemd/system/ares.target \
     live/config/includes.chroot/usr/lib/systemd/system/ares-boot-ready.service \
@@ -51,7 +52,13 @@ for required in \
     backend/src/ares/knowledge/graph.py \
     backend/src/ares/planner/engine.py \
     backend/src/ares/reasoning/engine.py \
+    backend/src/ares/runtime/terminal_broker.py \
+    backend/src/ares/terminal/executor.py \
+    backend/src/ares/terminal/models.py \
+    backend/src/ares/terminal/service.py \
+    backend/src/ares/terminal/store.py \
     backend/src/ares/workflows/engine.py \
+    docs/adr/0010-contextual-terminal-boundary.md \
     docs/architecture-v2-capabilities.md \
     docs/architecture-v2-extensibility.md \
     docs/diagrams/ares-v2-capability-flow.mmd \
@@ -69,6 +76,8 @@ printf '%s' "${ARES_BASE_IMAGE}" | grep -Eq '^debian:13\.[0-9]+-slim@sha256:[0-9
 printf '%s' "${ARES_DEBIAN_SNAPSHOT}" | grep -Eq '^[0-9]{8}T[0-9]{6}Z$' || fail 'invalid Debian snapshot timestamp'
 grep -q -- '--firmware-chroot false' "${repo_root}/live/auto/config" || fail 'firmware auto-discovery must remain disabled'
 grep -Eq '^[[:space:]]*cryptsetup-bin \\' "${repo_root}/live/Dockerfile.build" || fail 'the builder must provide veritysetup'
+grep -Fxq 'cryptsetup' "${repo_root}/live/config/package-lists/30-ares-recovery-base.list.chroot" \
+    || fail 'the live chroot must include cryptsetup so binary_dm-verity never depends on late APT resolution'
 grep -q 'policy drop;' "${repo_root}/live/config/includes.chroot/etc/nftables.conf" || fail 'the offline firewall must fail closed'
 if grep -q -- '--chroot-squashfs-compression-level' "${repo_root}/live/auto/config"; then
     fail 'the configured XZ compressor does not accept a generic compression-level option'
@@ -140,9 +149,43 @@ if rg -n 'ConditionPathIsExecutable=' \
     fail 'systemd uses ConditionFileIsExecutable, not ConditionPathIsExecutable'
 fi
 
-if rg -n '^(xfce4-panel|xfce4-terminal)$' "${repo_root}/live/config/package-lists"; then
-    fail 'the kiosk image must not install an interactive panel or terminal by default'
+if rg -n '^xfce4-panel$' "${repo_root}/live/config/package-lists"; then
+    fail 'the kiosk image must not install an interactive desktop panel by default'
 fi
+grep -qx 'xfce4-terminal' "${repo_root}/live/config/package-lists/10-ares-desktop.list.chroot" \
+    || fail 'the manual recovery terminal package must be present'
+grep -qx 'bubblewrap' "${repo_root}/live/config/package-lists/10-ares-desktop.list.chroot" \
+    || fail 'the contextual read-only terminal sandbox package must be present'
+grep -Fq '/usr/lib/ares/ares-terminal-watcher' \
+    "${repo_root}/live/config/includes.chroot/usr/lib/ares/ares-kiosk-session" \
+    || fail 'the kiosk session must launch the manual terminal watcher'
+[ -x "${repo_root}/live/config/includes.chroot/usr/lib/ares/ares-open-terminal" ] \
+    || fail 'the manual terminal opener must be executable'
+[ -x "${repo_root}/live/config/includes.chroot/usr/lib/ares/ares-terminal-watcher" ] \
+    || fail 'the manual terminal watcher must be executable'
+grep -Fq 'installed_system_read_only' \
+    "${repo_root}/live/config/includes.chroot/usr/lib/ares/ares-open-terminal" \
+    || fail 'the terminal opener must support the installed-system read-only context'
+grep -Fq '/usr/bin/bwrap --unshare-all' \
+    "${repo_root}/live/config/includes.chroot/usr/lib/ares/ares-open-terminal" \
+    || fail 'the installed-system terminal must enter a private bubblewrap namespace'
+grep -Fq '/system/terminal/plans' \
+    "${repo_root}/live/config/includes.chroot/usr/share/ares/platform/session.js" \
+    || fail 'the interface must use exact terminal plans before opening a terminal'
+if grep -Fq '/system/terminal/open' \
+    "${repo_root}/live/config/includes.chroot/usr/share/ares/platform/session.js"; then
+    fail 'the interface must not call the obsolete direct terminal-open endpoint'
+fi
+grep -Fq 'd /run/ares/terminals 0700 root root -' \
+    "${repo_root}/live/config/includes.chroot/usr/lib/tmpfiles.d/ares.conf" \
+    || fail 'the contextual terminal runtime directory must be root-owned'
+grep -Fq '/run/ares/terminals' \
+    "${repo_root}/live/config/includes.chroot/usr/lib/systemd/system/ares-tool-broker.service" \
+    || fail 'the privileged broker must be allowed to own terminal runtime state'
+grep -Fq 'BootDiagnosticsPlugin' "${repo_root}/backend/src/ares/main.py" \
+    || fail 'boot.diagnose must be registered in the composition root'
+grep -Fq 'boot.diagnose' "${repo_root}/backend/src/ares/capabilities/plugins/boot_diagnostics.py" \
+    || fail 'boot diagnostics capability metadata is missing'
 
 grep -q '^Exec=/usr/lib/ares/ares-kiosk-launch$' \
     "${repo_root}/live/config/includes.chroot/etc/xdg/autostart/ares-kiosk.desktop" \
@@ -180,6 +223,9 @@ grep -Fq '/capabilities/storage.disk-analysis/executions' \
 grep -Fq '/planner/plan' \
     "${repo_root}/live/config/includes.chroot/usr/share/ares/platform/app.js" \
     || fail 'the local interface must expose command-free Capability planning'
+grep -Fq 'window.AresResources' \
+    "${repo_root}/live/config/includes.chroot/usr/share/ares/platform/resources.js" \
+    || fail 'the local interface must expose the resource selector helper'
 if grep -Fq '"command"' \
     "${repo_root}/live/config/includes.chroot/usr/share/ares/platform/app.js"; then
     fail 'the local interface must not send command fields to a capability'

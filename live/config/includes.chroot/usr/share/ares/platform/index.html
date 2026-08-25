@@ -7,10 +7,13 @@
     <title>ARES OS</title>
     <link rel="stylesheet" href="style.css">
     <script src="app.js" defer></script>
+    <script src="resources.js" defer></script>
     <script src="storage.js" defer></script>
     <script src="partition.js" defer></script>
     <script src="backup.js" defer></script>
     <script src="filesystem.js" defer></script>
+    <script src="agent.js" defer></script>
+    <script src="session.js" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#contenido">Saltar al contenido</a>
@@ -26,12 +29,14 @@
         <nav>
           <a class="nav-link active" href="#resumen">Resumen</a>
           <a class="nav-link" href="#asistente">Asistente local</a>
+          <a class="nav-link" href="#agent-runner">Operación asistida</a>
           <a class="nav-link" href="#planner">Planner</a>
           <a class="nav-link" href="#capabilities">Storage</a>
           <a class="nav-link" href="#partition-management">Particiones</a>
           <a class="nav-link" href="#backups-section">Backups</a>
           <a class="nav-link" href="#filesystems-section">Filesystems</a>
           <a class="nav-link" href="#hardware">Hardware</a>
+          <a class="nav-link" href="#session-control">Salir</a>
         </nav>
         <div class="privacy-note">
           <span class="privacy-dot" aria-hidden="true"></span>
@@ -89,6 +94,41 @@
               <strong id="integrity-value">—</strong>
               <span id="integrity-detail" class="metric-detail">Verificando</span>
             </article>
+          </div>
+        </section>
+
+        <section id="agent-runner" class="section-block" aria-labelledby="agent-runner-title">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">AGENTE · BACKEND REAL · SIN SHELL GENÉRICA</p>
+              <h2 id="agent-runner-title">Operación asistida</h2>
+            </div>
+            <span id="agent-badge" class="status-badge pending">Esperando objetivo</span>
+          </div>
+          <div class="planner-layout">
+            <form id="agent-form" class="planner-form">
+              <label for="agent-objective">¿Qué quieres que ARES revise?</label>
+              <textarea
+                id="agent-objective"
+                rows="3"
+                minlength="3"
+                maxlength="1000"
+                placeholder="Ejemplo: revisa por qué no inicia mi computadora"
+                required
+              ></textarea>
+              <label for="agent-resource">Destino detectado</label>
+              <select id="agent-resource">
+                <option value="">ARES elegirá si no hay ambigüedad</option>
+              </select>
+              <button id="agent-start" type="submit">Crear plan operativo</button>
+              <p class="form-hint">
+                El modelo propone intención; el backend resuelve recursos, genera plan,
+                solicita autorización y ejecuta solo Capabilities reales.
+              </p>
+            </form>
+            <div id="agent-results" class="planner-results" aria-live="polite">
+              <p class="empty-state">Todavía no existe un AgentRun.</p>
+            </div>
           </div>
         </section>
 
@@ -245,6 +285,53 @@
           </div>
           <div id="hardware-grid" class="hardware-grid">
             <p class="empty-state">Esperando el inventario del arranque…</p>
+          </div>
+        </section>
+
+        <section id="session-control" class="section-block" aria-labelledby="session-control-title">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">SESION LIVE · SALIDA SEGURA · TERMINAL MANUAL</p>
+              <h2 id="session-control-title">Salir de ARES y herramientas manuales</h2>
+            </div>
+            <span id="session-badge" class="status-badge pending">Sin acción pendiente</span>
+          </div>
+          <div class="capability-layout">
+            <article class="capability-card">
+              <h3>Salir de ARES y volver al sistema</h3>
+              <p>
+                ARES no modifica ni repara GRUB para salir. Primero verifica firmware,
+                sistemas instalados y alternativas reales.
+              </p>
+              <div class="topbar-actions wrap-actions">
+                <button class="secondary-button session-preflight" data-operation="reboot_to_installed_system" type="button">Sistema instalado</button>
+                <button class="secondary-button session-preflight" data-operation="reboot_to_boot_menu" type="button">Menú firmware/GRUB si verificable</button>
+                <button class="secondary-button session-preflight" data-operation="reboot" type="button">Reiniciar</button>
+                <button class="secondary-button session-preflight" data-operation="poweroff" type="button">Apagar</button>
+              </div>
+            </article>
+            <article class="capability-card">
+              <h3>Abrir terminal de recuperación</h3>
+              <p>
+                Terminal manual separada del LLM. ARES registra la apertura; los comandos
+                escritos por el usuario no son ejecución del asistente.
+              </p>
+              <label for="terminal-context">Contexto de terminal</label>
+              <select id="terminal-context">
+                <option value="ares_local">Entorno de recuperación ARES</option>
+              </select>
+              <label for="terminal-resource">Sistema instalado detectado</label>
+              <select id="terminal-resource">
+                <option value="">ARES elegirá si hay un único candidato</option>
+              </select>
+              <p id="terminal-context-detail" class="form-hint">
+                ARES abrirá una terminal manual sin privilegios.
+              </p>
+              <button id="terminal-open" type="button">Abrir terminal seleccionada</button>
+            </article>
+            <div id="session-results" class="capability-results">
+              <p class="empty-state">Selecciona una acción para ver preflight real.</p>
+            </div>
           </div>
         </section>
 

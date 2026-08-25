@@ -1,4 +1,5 @@
 adwaita-icon-theme
+bubblewrap
 dbus-x11
 firefox-esr
 fonts-dejavu-core
@@ -7,6 +8,7 @@ lightdm-gtk-greeter
 thunar
 xfce4-session
 xfce4-settings
+xfce4-terminal
 xfconf
 xfdesktop4
 xfwm4
