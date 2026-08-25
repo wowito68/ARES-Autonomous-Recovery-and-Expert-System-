@@ -29,6 +29,8 @@
 | `GET /api/v1/knowledge/graph` | Snapshot versionado del Knowledge Graph |
 | `GET /api/v1/storage/disks` | Discos del último snapshot Storage persistido |
 | `POST /api/v1/storage/analyze` | Vertical slice completo `storage.disk-analysis` + diagnóstico |
+| `GET /api/v1/storage/snapshots/{id}` | Recupera un `SystemStorageSnapshot` |
+| `GET /api/v1/diagnostics/{id}` | Recupera un `DiagnosticResult` |
 
 Diagnósticos read-only adicionales instalados en el catálogo:
 
@@ -40,8 +42,15 @@ Diagnósticos read-only adicionales instalados en el catálogo:
 
 Los contratos, alcances y límites se documentan en
 [`capabilities/read-only-diagnostic-analysis.md`](capabilities/read-only-diagnostic-analysis.md).
-| `GET /api/v1/storage/snapshots/{id}` | Recupera un `SystemStorageSnapshot` |
-| `GET /api/v1/diagnostics/{id}` | Recupera un `DiagnosticResult` |
+
+El catálogo también instala 12 contratos de recuperación privilegiada con
+`enabled=false`. La respuesta pública de cada capability expone `enabled`,
+`disabled_reason`, requisitos de autorización/checkpoint y soporte declarado de dry-run,
+verificación y rollback. Una ejecución deshabilitada responde 409
+`CAPABILITY_DISABLED`; no se crea un workflow ni se interpreta el payload como shell.
+
+La matriz y el procedimiento de activación están en
+[`capabilities/privileged-recovery-contracts.md`](capabilities/privileged-recovery-contracts.md).
 
 ## Capability `storage.disk-analysis`
 

@@ -26,6 +26,7 @@ from ares.capabilities.plugins import (
     DiagnosticAnalysisPlugin,
     DiskAnalysisPlugin,
     FilesystemRepairPlugin,
+    RecoveryCorePlugin,
     StoragePartitionPlugin,
 )
 from ares.config import Environment, Settings, get_settings
@@ -168,6 +169,7 @@ def create_app(
         DiskAnalysisPlugin(storage_tools, snapshot_store),
         DiagnosticAnalysisPlugin(diagnostic_tools),
         BootDiagnosticsPlugin(snapshot_store),
+        RecoveryCorePlugin(),
         BackupPlugin(backup_store, backup_tools, backup_executor),
         FilesystemRepairPlugin(filesystem_store, filesystem_executor),
         StoragePartitionPlugin(storage_operation_engine, storage_operation_store),
