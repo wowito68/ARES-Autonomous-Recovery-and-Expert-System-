@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ares.agent.models import (
     AgentAuthorizationRequest,
@@ -21,6 +21,9 @@ from ares.agent.store import AgentRunStore
 from ares.events import AresEvent, EventBus, EventSeverity
 from ares.resources.models import ResourceCandidate, ResourceKind
 from ares.resources.service import ResourceResolver
+
+if TYPE_CHECKING:
+    from ares.reasoning.models import EvidenceFact
 
 
 class AgentOrchestratorError(Exception):
@@ -70,63 +73,13 @@ class AgentOrchestrator:
         backend_plan = self.planner.plan(
             ReasoningRequest(goal=_planner_goal(request.objective), evidence=evidence)
         )
-        steps: list[AgentPlanStep] = [
-            AgentPlanStep(
-                id="collect-storage-evidence",
-                objective="Detectar discos, particiones, filesystems, montajes y sistemas instalados.",
-                state=AgentStepState.AUTHORIZATION_REQUIRED,
-                capability_id="storage.disk-analysis",
+        steps = list(
+            _diagnostic_steps(
+                request.objective,
                 target_resource_id=selected.resource_id if selected else None,
-                prerequisites=("Inventario público de hardware o probes pasivos disponibles.",),
-                risk="low",
-                requires_authorization=True,
-                requires_protection=False,
-                action=TechnicalAction(
-                    capability_id="storage.disk-analysis",
-                    operation_class="observe",
-                    risk="low",
-                    command_summary=(
-                        "Ejecutar probes pasivos allowlisted de almacenamiento.",
-                        "Persistir snapshot local de ARES.",
-                        "Actualizar Knowledge Graph local.",
-                    ),
-                ),
-                expected_result="Snapshot estructurado de almacenamiento y diagnóstico inicial.",
-                verification="El workflow debe terminar como SUCCEEDED y producir snapshot_id.",
-                rollback_strategy="No aplica: no se escriben dispositivos; solo evidencia local de ARES.",
-                evidence=tuple(item.id for item in evidence),
-            ),
-        ]
-        if boot_goal:
-            steps.append(
-                AgentPlanStep(
-                    id="diagnose-boot",
-                    objective="Diagnosticar evidencia de arranque sin modificar GRUB ni montar sistemas.",
-                    state=AgentStepState.AUTHORIZATION_REQUIRED,
-                    capability_id="boot.diagnose",
-                    target_resource_id=selected.resource_id if selected else None,
-                    prerequisites=("Snapshot de almacenamiento generado por ARES.",),
-                    risk="low",
-                    requires_authorization=True,
-                    requires_protection=False,
-                    action=TechnicalAction(
-                        capability_id="boot.diagnose",
-                        operation_class="observe",
-                        risk="low",
-                        command_summary=(
-                            "Leer snapshot de almacenamiento persistido por ARES.",
-                            "Determinar firmware UEFI/BIOS desde evidencia local.",
-                            "Identificar sistemas instalados y candidatos EFI.",
-                            "Comprobar GRUB solo si sus archivos ya están visibles.",
-                        ),
-                    ),
-                    expected_result="BootDiagnosticResult con hallazgos, evidencia y limitaciones.",
-                    verification="El workflow debe terminar como SUCCEEDED y producir findings tipados.",
-                    rollback_strategy="No aplica: diagnóstico de solo lectura.",
-                    dependencies=("collect-storage-evidence",),
-                    evidence=tuple(item.id for item in evidence),
-                )
+                evidence_ids=tuple(item.id for item in evidence),
             )
+        )
         run = AgentRun(
             objective=request.objective,
             state=AgentRunState.READ_ONLY_AUTHORIZATION_REQUIRED,
@@ -175,9 +128,12 @@ class AgentOrchestrator:
         authorization = ReadOnlyAuthorization(
             run_id=run.id,
             step_ids=tuple(step.id for step in run.steps if step.requires_authorization),
-            resource_fingerprints=(
-                (selected.stable_identity,) if selected is not None else ()
+            capability_ids=tuple(
+                step.capability_id
+                for step in run.steps
+                if step.requires_authorization and step.capability_id is not None
             ),
+            resource_fingerprints=((selected.stable_identity,) if selected is not None else ()),
             granted_by=operator,
             objective=run.objective,
             target_resource_id=selected.resource_id if selected is not None else None,
@@ -196,7 +152,10 @@ class AgentOrchestrator:
                 "updated_at": datetime.now(UTC),
                 "authorization": authorization,
                 "steps": steps,
-                "summary": "Autorización limitada de solo lectura concedida. Aún no hay mutaciones autorizadas.",
+                "summary": (
+                    "Autorización limitada de solo lectura concedida. "
+                    "Aún no hay mutaciones autorizadas."
+                ),
                 "events": (*run.events, "agent.authorization.read_only.granted"),
             }
         )
@@ -220,7 +179,8 @@ class AgentOrchestrator:
         run = await self._required(run_id)
         if run.authorization is None or run.authorization.consumed:
             raise AgentOrchestratorError("AGENT_AUTHORIZATION_REQUIRED")
-        if run.authorization.expires_at <= datetime.now(UTC):
+        authorization = run.authorization
+        if authorization.expires_at <= datetime.now(UTC):
             return await self._invalidate(run, session_id, "authorization_expired")
         catalog = await self.resources.catalog()
         selected = self._select_resource(catalog.resources, run.selected_resource_id)
@@ -230,7 +190,7 @@ class AgentOrchestrator:
             and selected.stable_identity != run.selected_resource_fingerprint
         ):
             return await self._invalidate(run, session_id, "selected_resource_identity_changed")
-        if run.authorization.plan_fingerprint != _run_fingerprint(run, selected):
+        if authorization.plan_fingerprint != _run_fingerprint(run, selected):
             return await self._invalidate(run, session_id, "authorized_plan_fingerprint_changed")
         running = run.model_copy(
             update={
@@ -238,7 +198,7 @@ class AgentOrchestrator:
                 "updated_at": datetime.now(UTC),
                 "steps": tuple(
                     step.model_copy(update={"state": AgentStepState.EXECUTING})
-                    if step.id in run.authorization.step_ids
+                    if step.id in authorization.step_ids
                     else step
                     for step in run.steps
                 ),
@@ -248,121 +208,115 @@ class AgentOrchestrator:
         )
         await self.store.put(running)
         await self._event("agent.diagnostic.started", running, session_id, {})
-        try:
-            analysis = await self.storage.analyze(session_id=session_id)
-        except Exception as exc:
-            error_code = getattr(exc, "code", "STORAGE_ANALYSIS_FAILED")
-            failed = running.model_copy(
-                update={
-                    "state": AgentRunState.FAILED,
-                    "updated_at": datetime.now(UTC),
-                    "steps": tuple(
-                        step.model_copy(
-                            update={
-                                "state": AgentStepState.FAILED,
-                                "error_code": error_code,
-                            }
-                        )
-                        if step.id in running.authorization.step_ids
-                        else step
-                        for step in running.steps
-                    ),
-                    "summary": "El diagnóstico real falló; no se ejecutó ninguna reparación.",
-                    "events": (*running.events, "agent.diagnostic.failed"),
-                }
-            )
-            await self.store.put(failed)
-            await self._event("agent.diagnostic.failed", failed, session_id, {"error_code": error_code})
-            return failed
-        completed_steps = [
-            step.model_copy(
-                update={
-                    "state": AgentStepState.COMPLETED,
-                    "result": {
+        completed_steps = list(running.steps)
+        snapshot_id: str | None = None
+        diagnostic_id: str | None = None
+        succeeded: list[str] = []
+        failed_capabilities: list[str] = []
+        storage_failed = False
+        for index, step in enumerate(completed_steps):
+            if step.id not in authorization.step_ids or step.capability_id is None:
+                continue
+            capability_id = step.capability_id
+            if storage_failed:
+                completed_steps[index] = step.model_copy(
+                    update={
+                        "state": AgentStepState.BLOCKED,
+                        "error_code": "DIAGNOSTIC_DEPENDENCY_FAILED",
+                    }
+                )
+                failed_capabilities.append(capability_id)
+                continue
+            try:
+                if capability_id == "storage.disk-analysis":
+                    analysis = await self.storage.analyze(session_id=session_id)
+                    snapshot_id = analysis.snapshot_id
+                    diagnostic_id = analysis.diagnostic_id
+                    result: dict[str, object] = {
                         "snapshot_id": analysis.snapshot_id,
                         "diagnostic_id": analysis.diagnostic_id,
                         "message": analysis.message,
-                    },
+                    }
+                else:
+                    execution = await self.capabilities.execute(
+                        capability_id,
+                        _capability_payload(
+                            capability_id,
+                            snapshot_id=snapshot_id,
+                            target_resource_id=running.selected_resource_id,
+                        ),
+                    )
+                    if (
+                        getattr(execution.status, "value", execution.status) != "succeeded"
+                        or execution.result is None
+                    ):
+                        raise AgentOrchestratorError(
+                            execution.error_code or "DIAGNOSTIC_CAPABILITY_FAILED"
+                        )
+                    result = execution.result
+                completed_steps[index] = step.model_copy(
+                    update={"state": AgentStepState.COMPLETED, "result": result}
+                )
+                succeeded.append(capability_id)
+            except Exception as exc:
+                error_code = getattr(exc, "code", "DIAGNOSTIC_CAPABILITY_FAILED")
+                completed_steps[index] = step.model_copy(
+                    update={"state": AgentStepState.FAILED, "error_code": error_code}
+                )
+                failed_capabilities.append(capability_id)
+                if capability_id == "storage.disk-analysis":
+                    storage_failed = True
+            progress = running.model_copy(
+                update={
+                    "updated_at": datetime.now(UTC),
+                    "steps": tuple(completed_steps),
+                    "summary": (
+                        f"Diagnósticos completados: {len(succeeded)} "
+                        f"de {len(running.steps)}."
+                    ),
                 }
             )
-            if step.id in running.authorization.step_ids
-            else step
-            for step in running.steps
-        ]
-        boot_failed = False
-        if any(step.id == "diagnose-boot" for step in running.steps):
-            try:
-                boot_execution = await self.capabilities.execute(
-                    "boot.diagnose",
-                    {
-                        "snapshot_id": analysis.snapshot_id,
-                        "target_resource_id": running.selected_resource_id,
-                    },
-                )
-                if (
-                    getattr(boot_execution.status, "value", boot_execution.status) == "succeeded"
-                    and boot_execution.result is not None
-                ):
-                    completed_steps = [
-                        step.model_copy(
-                            update={
-                                "state": AgentStepState.COMPLETED,
-                                "result": boot_execution.result,
-                            }
-                        )
-                        if step.id == "diagnose-boot"
-                        else step
-                        for step in completed_steps
-                    ]
-                else:
-                    boot_failed = True
-                    completed_steps = [
-                        step.model_copy(
-                            update={
-                                "state": AgentStepState.FAILED,
-                                "error_code": boot_execution.error_code or "BOOT_DIAGNOSE_FAILED",
-                            }
-                        )
-                        if step.id == "diagnose-boot"
-                        else step
-                        for step in completed_steps
-                    ]
-            except Exception as exc:
-                boot_failed = True
-                completed_steps = [
-                    step.model_copy(
-                        update={
-                            "state": AgentStepState.FAILED,
-                            "error_code": getattr(exc, "code", "BOOT_DIAGNOSE_FAILED"),
-                        }
-                    )
-                    if step.id == "diagnose-boot"
-                    else step
-                    for step in completed_steps
-                ]
+            await self.store.put(progress)
         refreshed = await self.resources.catalog()
+        if not succeeded:
+            final_state = AgentRunState.FAILED
+        elif failed_capabilities or running.limitations:
+            final_state = AgentRunState.PARTIAL
+        else:
+            final_state = AgentRunState.COMPLETED
         completed = running.model_copy(
             update={
-                "state": AgentRunState.PARTIAL
-                if running.limitations or boot_failed
-                else AgentRunState.COMPLETED,
+                "state": final_state,
                 "updated_at": datetime.now(UTC),
                 "resources": refreshed.resources,
-                "authorization": running.authorization.model_copy(update={"consumed": True}),
+                "authorization": authorization.model_copy(update={"consumed": True}),
                 "steps": tuple(completed_steps),
                 "summary": (
-                    "Diagnóstico read-only completado con evidencia real. "
+                    f"Diagnóstico read-only: {len(succeeded)} capability(s) completada(s), "
+                    f"{len(failed_capabilities)} fallida(s) o bloqueada(s). "
                     "No se ejecutó ninguna reparación."
                 ),
-                "events": (*running.events, "agent.diagnostic.completed"),
+                "events": (
+                    *running.events,
+                    "agent.diagnostic.completed"
+                    if final_state is not AgentRunState.FAILED
+                    else "agent.diagnostic.failed",
+                ),
             }
         )
         await self.store.put(completed)
         await self._event(
-            "agent.diagnostic.completed",
+            "agent.diagnostic.failed"
+            if final_state is AgentRunState.FAILED
+            else "agent.diagnostic.completed",
             completed,
             session_id,
-            {"snapshot_id": analysis.snapshot_id, "diagnostic_id": analysis.diagnostic_id},
+            {
+                "snapshot_id": snapshot_id,
+                "diagnostic_id": diagnostic_id,
+                "completed_capabilities": succeeded,
+                "failed_capabilities": failed_capabilities,
+            },
         )
         return completed
 
@@ -446,17 +400,193 @@ class AgentOrchestrator:
 
 
 def _recommended(resources: tuple[ResourceCandidate, ...]) -> ResourceCandidate | None:
-    for kind in (ResourceKind.OPERATING_SYSTEM, ResourceKind.DISK, ResourceKind.RECOVERY_ENVIRONMENT):
+    for kind in (
+        ResourceKind.OPERATING_SYSTEM,
+        ResourceKind.DISK,
+        ResourceKind.RECOVERY_ENVIRONMENT,
+    ):
         candidates = [item for item in resources if item.kind is kind and item.recommended]
         if len(candidates) == 1:
             return candidates[0]
     return next(iter(resources), None)
 
 
-def _evidence_from_resources(resources: tuple[ResourceCandidate, ...]) -> tuple[object, ...]:
+def _diagnostic_steps(
+    objective: str,
+    *,
+    target_resource_id: str | None,
+    evidence_ids: tuple[str, ...],
+) -> tuple[AgentPlanStep, ...]:
+    requested = _requested_capabilities(objective)
+    details: dict[str, dict[str, object]] = {
+        "storage.disk-analysis": {
+            "step_id": "collect-storage-evidence",
+            "objective": "Detectar discos, particiones, filesystems y sistemas instalados.",
+            "summary": (
+                "Ejecutar probes pasivos allowlisted de almacenamiento.",
+                "Persistir snapshot local de ARES.",
+                "Actualizar Knowledge Graph local.",
+            ),
+            "result": "Snapshot estructurado de almacenamiento y diagnóstico inicial.",
+            "verification": "El workflow debe producir snapshot_id mediante evidencia real.",
+            "dependencies": (),
+        },
+        "storage.space-analysis": {
+            "step_id": "analyze-storage-space",
+            "objective": "Medir capacidad, inodos y categorías que consumen espacio sin borrar.",
+            "summary": (
+                "Consultar statvfs del target resuelto por ARES.",
+                "Recorrer metadatos con límites, sin seguir symlinks ni leer contenido personal.",
+                "Estimar categorías recuperables sin ejecutar limpieza.",
+            ),
+            "result": "SpaceAnalysisResult con consumidores, estimaciones y limitaciones.",
+            "verification": "El resultado debe incluir fingerprint, evidencia y métricas tipadas.",
+            "dependencies": ("collect-storage-evidence",),
+        },
+        "system.memory-analysis": {
+            "step_id": "analyze-system-memory",
+            "objective": "Distinguir presión real, caché, swap y evidencia histórica OOM.",
+            "summary": (
+                "Normalizar métricas /proc únicamente para el runtime accesible.",
+                "Separar explícitamente evidencia histórica de un target offline.",
+                "No terminar procesos, vaciar cachés ni cambiar sysctl.",
+            ),
+            "result": "MemoryAnalysisResult con scope runtime u offline inequívoco.",
+            "verification": "No debe atribuir métricas actuales a un sistema offline.",
+            "dependencies": ("collect-storage-evidence",),
+        },
+        "packages.health-check": {
+            "step_id": "check-package-health",
+            "objective": "Revisar coherencia dpkg/APT sin red, locks de escritura ni scripts.",
+            "summary": (
+                "Leer metadatos locales dpkg/APT de forma acotada.",
+                "Detectar estados incompletos y actualizaciones interrumpidas.",
+                "No ejecutar apt update, install, remove ni dpkg --configure.",
+            ),
+            "result": "PackageHealthResult con estado y evidencia normalizada.",
+            "verification": "El target debe conservarse sin cambios y sin conexiones de red.",
+            "dependencies": ("collect-storage-evidence",),
+        },
+        "services.failure-analysis": {
+            "step_id": "analyze-service-failures",
+            "objective": "Identificar unidades fallidas y evidencia persistente sin reiniciarlas.",
+            "summary": (
+                "Consultar el estado systemd con una invocación fija allowlisted.",
+                "Tratar logs y nombres de unidad como datos no confiables.",
+                "No reiniciar, habilitar, deshabilitar ni modificar servicios.",
+            ),
+            "result": "ServiceFailureResult con unidades y hallazgos acotados.",
+            "verification": "La salida debe estar normalizada y libre de comandos arbitrarios.",
+            "dependencies": ("collect-storage-evidence",),
+        },
+        "boot.diagnose": {
+            "step_id": "diagnose-boot",
+            "objective": "Diagnosticar evidencia de arranque sin modificar GRUB ni NVRAM.",
+            "summary": (
+                "Leer snapshot de almacenamiento persistido por ARES.",
+                "Determinar firmware UEFI/BIOS desde evidencia local.",
+                "Identificar sistemas instalados, candidatos EFI y GRUB visible.",
+            ),
+            "result": "BootDiagnosticResult con hallazgos, evidencia y limitaciones.",
+            "verification": "El workflow debe producir findings tipados sin reparar.",
+            "dependencies": ("collect-storage-evidence",),
+        },
+    }
+    steps: list[AgentPlanStep] = []
+    for capability_id in requested:
+        item = details[capability_id]
+        steps.append(
+            AgentPlanStep(
+                id=str(item["step_id"]),
+                objective=str(item["objective"]),
+                state=AgentStepState.AUTHORIZATION_REQUIRED,
+                capability_id=capability_id,
+                target_resource_id=target_resource_id,
+                prerequisites=("Target identificado por ARES y autorización contextual vigente.",),
+                risk="low",
+                requires_authorization=True,
+                requires_protection=False,
+                action=TechnicalAction(
+                    capability_id=capability_id,
+                    operation_class="observe",
+                    risk="low",
+                    privileged=True,
+                    command_summary=tuple(item["summary"]),  # type: ignore[arg-type]
+                    expected_changes="Ninguno sobre el target; solo evidencia local de ARES.",
+                ),
+                expected_result=str(item["result"]),
+                verification=str(item["verification"]),
+                rollback_strategy="No aplica: diagnóstico de solo lectura.",
+                dependencies=tuple(item["dependencies"]),  # type: ignore[arg-type]
+                evidence=evidence_ids,
+            )
+        )
+    return tuple(steps)
+
+
+def _requested_capabilities(objective: str) -> tuple[str, ...]:
+    lowered = objective.casefold()
+    comprehensive = any(
+        term in lowered
+        for term in (
+            "diagnóstico completo",
+            "diagnostico completo",
+            "analiza todo",
+            "salud del sistema",
+        )
+    )
+    requested = ["storage.disk-analysis"]
+    groups = (
+        (
+            "storage.space-analysis",
+            (
+                "espacio",
+                "disco lleno",
+                "archivos grandes",
+                "liberar",
+                "caché",
+                "cache",
+                "disk usage",
+            ),
+        ),
+        ("system.memory-analysis", ("memoria", " ram", "swap", "oom", "memory")),
+        (
+            "packages.health-check",
+            ("paquete", "apt", "dpkg", "dependencia", "actualización", "actualizacion"),
+        ),
+        (
+            "services.failure-analysis",
+            ("servicio", "systemd", "daemon", "unidades fallidas", "failed service"),
+        ),
+        ("boot.diagnose", ("arranque", "no inicia", "boot", "grub", "uefi", "bios")),
+    )
+    for capability_id, terms in groups:
+        if comprehensive or any(term in lowered for term in terms):
+            requested.append(capability_id)
+    return tuple(requested)
+
+
+def _capability_payload(
+    capability_id: str,
+    *,
+    snapshot_id: str | None,
+    target_resource_id: str | None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "snapshot_id": snapshot_id,
+        "target_resource_id": target_resource_id,
+    }
+    if capability_id == "storage.space-analysis":
+        payload["analysis_depth"] = "standard"
+    return payload
+
+
+def _evidence_from_resources(
+    resources: tuple[ResourceCandidate, ...],
+) -> tuple[EvidenceFact, ...]:
     from ares.reasoning.models import EvidenceFact
 
-    facts: list[object] = []
+    facts: list[EvidenceFact] = []
     if any(item.kind is ResourceKind.DISK for item in resources):
         facts.append(EvidenceFact(id="hardware.block-devices", confidence=0.8))
     return tuple(facts)

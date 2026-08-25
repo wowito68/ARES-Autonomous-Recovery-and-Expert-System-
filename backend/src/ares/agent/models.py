@@ -113,6 +113,7 @@ class ReadOnlyAuthorization(BaseModel):
     id: str = Field(default_factory=lambda: uuid4().hex)
     run_id: str
     step_ids: tuple[str, ...]
+    capability_ids: tuple[str, ...] = ()
     resource_fingerprints: tuple[str, ...]
     granted_by: str
     objective: str
