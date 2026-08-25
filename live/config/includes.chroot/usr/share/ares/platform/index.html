@@ -116,9 +116,13 @@
                 placeholder="Ejemplo: revisa por qué no inicia mi computadora"
                 required
               ></textarea>
-              <label for="agent-resource">Destino detectado</label>
+              <label for="agent-resource">Recurso principal</label>
               <select id="agent-resource">
                 <option value="">ARES elegirá si no hay ambigüedad</option>
+              </select>
+              <label for="agent-destination-resource">Destino para backup opcional</label>
+              <select id="agent-destination-resource">
+                <option value="">Sin destino de backup</option>
               </select>
               <button id="agent-start" type="submit">Crear plan operativo</button>
               <p class="form-hint">

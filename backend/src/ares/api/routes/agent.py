@@ -13,6 +13,7 @@ from ares.agent import (
     AgentRun,
     AgentRunCollection,
     AgentRunRequest,
+    AgentTimelineEntry,
 )
 from ares.core.problems import AresProblem, ProblemDetail
 
@@ -76,6 +77,26 @@ async def authorize_read_only(
 
 
 @router.post(
+    "/runs/{run_id}/authorize-mutation",
+    response_model=AgentRun,
+    responses={404: _PROBLEM_SCHEMA, 409: _PROBLEM_SCHEMA},
+    summary="Grant a short-lived exact authorization for one scoped mutating envelope",
+)
+async def authorize_mutation(
+    run_id: str, payload: AgentAuthorizationRequest, request: Request
+) -> AgentRun:
+    try:
+        return await _service(request).authorize_mutation(
+            run_id,
+            payload,
+            session_id=_session(request),
+            operator="local-user",
+        )
+    except AgentOrchestratorError as exc:
+        raise _problem(exc) from exc
+
+
+@router.post(
     "/runs/{run_id}/execute",
     response_model=AgentRun,
     responses={404: _PROBLEM_SCHEMA, 409: _PROBLEM_SCHEMA, 503: _PROBLEM_SCHEMA},
@@ -89,6 +110,19 @@ async def execute(run_id: str, request: Request) -> AgentRun:
 
 
 @router.post(
+    "/runs/{run_id}/continue",
+    response_model=AgentRun,
+    responses={404: _PROBLEM_SCHEMA, 409: _PROBLEM_SCHEMA, 503: _PROBLEM_SCHEMA},
+    summary="Continue an already-authorized operational run",
+)
+async def continue_run(run_id: str, request: Request) -> AgentRun:
+    try:
+        return await _service(request).continue_run(run_id, session_id=_session(request))
+    except AgentOrchestratorError as exc:
+        raise _problem(exc) from exc
+
+
+@router.post(
     "/runs/{run_id}/cancel",
     response_model=AgentRun,
     responses={404: _PROBLEM_SCHEMA},
@@ -97,6 +131,19 @@ async def execute(run_id: str, request: Request) -> AgentRun:
 async def cancel(run_id: str, request: Request) -> AgentRun:
     try:
         return await _service(request).cancel(run_id, session_id=_session(request))
+    except AgentOrchestratorError as exc:
+        raise _problem(exc) from exc
+
+
+@router.get(
+    "/runs/{run_id}/timeline",
+    response_model=tuple[AgentTimelineEntry, ...],
+    responses={404: _PROBLEM_SCHEMA},
+    summary="Read the immutable timeline for one operational run",
+)
+async def timeline(run_id: str, request: Request) -> tuple[AgentTimelineEntry, ...]:
+    try:
+        return await _service(request).timeline(run_id)
     except AgentOrchestratorError as exc:
         raise _problem(exc) from exc
 
@@ -118,9 +165,18 @@ def _problem(exc: AgentOrchestratorError) -> AresProblem:
         "AGENT_AUTHORIZATION_REQUIRED",
         "AGENT_AUTHORIZATION_NOT_REQUIRED",
         "AGENT_AUTHORIZATION_CONFIRMATION_REQUIRED",
+        "AGENT_AUTHORIZATION_ENVELOPE_REQUIRED",
+        "AGENT_AUTHORIZATION_EXPIRED",
     }:
         http_status = 409
         title = "Agent authorization state mismatch"
+    elif code in {
+        "AGENT_LIMIT_STEPS_EXCEEDED",
+        "AGENT_LIMIT_INVOCATIONS_EXCEEDED",
+        "AGENT_CAPABILITY_OUT_OF_SCOPE",
+    }:
+        http_status = 409
+        title = "Agent autonomy limit exceeded"
     else:
         http_status = 409
         title = "Agent run rejected"

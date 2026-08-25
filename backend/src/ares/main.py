@@ -9,8 +9,8 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from ares.api.router import api_router
 from ares.agent import AgentOrchestrator, AgentRunStore
+from ares.api.router import api_router
 from ares.audit import AuditLedger, MemoryAuditLedger, UnixAuditLedgerClient
 from ares.backup import (
     BackupExecutor,
@@ -65,6 +65,7 @@ from ares.terminal import (
     TerminalStore,
     UnixBrokerTerminalExecutor,
 )
+from ares.terminal.executor import TerminalExecutor
 from ares.tools import (
     BackupFilesystemTools,
     ReadOnlyStorageProcessRunner,
@@ -123,6 +124,7 @@ def create_app(
     audit_ledger: AuditLedger
     filesystem_executor: FilesystemExecutor
     storage_operation_executor: StorageOperationExecutor
+    terminal_executor: TerminalExecutor
     if resolved_settings.environment is Environment.TEST:
         backup_executor = LocalTestBackupExecutor(backup_tools)
         audit_ledger = MemoryAuditLedger()
@@ -195,14 +197,6 @@ def create_app(
     system_session_service = SystemSessionService(
         resolved_settings, resource_resolver, terminal_service
     )
-    agent_orchestrator = AgentOrchestrator(
-        store=agent_run_store,
-        resources=resource_resolver,
-        planner=planner,
-        capabilities=capability_manager,
-        storage=storage_analysis_service,
-        events=event_bus,
-    )
     backup_service = BackupService(
         capability_manager,
         workflow_engine,
@@ -210,6 +204,17 @@ def create_app(
         backup_tools,
         event_bus,
         audit_ledger,
+    )
+    model_runtime = ai_runtime or OllamaRuntime(resolved_settings)
+    agent_orchestrator = AgentOrchestrator(
+        store=agent_run_store,
+        resources=resource_resolver,
+        planner=planner,
+        capabilities=capability_manager,
+        storage=storage_analysis_service,
+        events=event_bus,
+        backup=backup_service,
+        ai_runtime=model_runtime,
     )
     protection_service = ProtectionCheckpointService(backup_store, checkpoint_store)
     storage_operation_service = StorageOperationService(
@@ -263,7 +268,7 @@ def create_app(
     )
     application.state.settings = resolved_settings
     application.state.database = database
-    application.state.ai_runtime = ai_runtime or OllamaRuntime(resolved_settings)
+    application.state.ai_runtime = model_runtime
     application.state.event_bus = event_bus
     application.state.audit_ledger = audit_ledger
     application.state.knowledge_graph = knowledge_graph
