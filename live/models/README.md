@@ -56,6 +56,16 @@ compatibilidad deben aprobarse antes de incluir pesos en una imagen de
 distribución. No se descarga nada durante el arranque ni durante la
 construcción normal.
 
+Para preparar el paquete de desarrollo reproducible:
+
+```sh
+make prepare-ai-bundle
+```
+
+El comando descarga el runtime Ollama fijado, materializa el modelo en
+`store/`, escribe `BUNDLE.json` y regenera `SHA256SUMS`. Los directorios
+`runtime/` y `store/` permanecen fuera de Git por su tamaño.
+
 El runtime se ejecuta como `ares-llm`, escucha solo en `127.0.0.1:11434` y la
 unidad systemd bloquea cualquier dirección que no sea loopback. El backend no
 envía definiciones de herramientas al modelo.

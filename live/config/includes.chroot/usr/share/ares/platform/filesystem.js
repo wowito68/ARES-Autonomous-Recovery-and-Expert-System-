@@ -29,7 +29,7 @@
     let section = document.getElementById("filesystems-section");
     if (section) return section;
 
-    section = element("section", "panel");
+    section = element("section", "section-block auxiliary-section");
     section.id = "filesystems-section";
     section.dataset.aresSection = "filesystems";
     section.append(element("h2", "", "Filesystems"));
@@ -84,7 +84,7 @@
 
     const nav = document.querySelector("nav");
     if (nav && !document.querySelector('[href="#filesystems-section"]')) {
-      const link = element("a", "", "Filesystems");
+      const link = element("a", "nav-link", "Filesystems");
       link.href = "#filesystems-section";
       nav.append(link);
     }

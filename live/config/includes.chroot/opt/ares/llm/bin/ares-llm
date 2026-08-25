@@ -2,4 +2,5 @@
 set -eu
 
 # The systemd unit confines this process to loopback and denies non-local IPs.
+export LD_LIBRARY_PATH="/opt/ares/llm/runtime/lib/ollama${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 exec /opt/ares/llm/runtime/bin/ollama serve

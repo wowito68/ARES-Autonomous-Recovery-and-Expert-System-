@@ -1,0 +1,32 @@
+[Unit]
+Description=ARES local AI boot self-test
+Documentation=file:/usr/share/doc/ares-os/local-ai.md
+ConditionFileIsExecutable=/opt/ares/llm/runtime/bin/ollama
+Wants=ares-backend.service ares-llm.service
+After=ares-boot-ready.service ares-backend.service ares-llm.service
+
+[Service]
+Type=oneshot
+User=ares-api
+Group=ares-api
+SupplementaryGroups=dialout tty
+ExecStart=/usr/lib/ares/ares-ai-selftest
+TimeoutStartSec=240s
+Nice=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+ReadWritePaths=/run/ares
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+
+[Install]
+WantedBy=ares.target

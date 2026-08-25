@@ -27,10 +27,15 @@ case "${accel}" in
         exit 2
         ;;
 esac
-temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/ares-qemu.XXXXXX")
+if [ -n "${ARES_QEMU_EVIDENCE_DIR:-}" ]; then
+    temp_dir=${ARES_QEMU_EVIDENCE_DIR}
+    mkdir -p "${temp_dir}"
+else
+    temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/ares-qemu.XXXXXX")
+fi
 failed=0
 cleanup() {
-    if [ "${failed}" -eq 0 ]; then
+    if [ "${failed}" -eq 0 ] && [ "${ARES_QEMU_KEEP_EVIDENCE:-0}" != "1" ]; then
         rm -rf -- "${temp_dir}"
     else
         printf 'QEMU evidence retained at %s\n' "${temp_dir}" >&2
@@ -60,6 +65,7 @@ run_boot() {
 
     while kill -0 "${qemu_pid}" 2>/dev/null; do
         if grep -Fq 'ARES_BOOT_READY ' "${log}"; then
+            boot_marker=$(grep -F 'ARES_BOOT_READY ' "${log}" | tail -n 1)
             if ! grep -Fq "trust=${expected_trust}" "${log}"; then
                 kill "${qemu_pid}" 2>/dev/null || true
                 wait "${qemu_pid}" 2>/dev/null || true
@@ -70,11 +76,17 @@ run_boot() {
                 wait "${qemu_pid}" 2>/dev/null || true
                 fail_boot "${name}" "backend, static interface, or hardware inventory did not become ready"
             fi
+            if printf '%s\n' "${boot_marker}" | grep -Fq 'kiosk=' && \
+                ! printf '%s\n' "${boot_marker}" | grep -Fq 'kiosk=READY'; then
+                kill "${qemu_pid}" 2>/dev/null || true
+                wait "${qemu_pid}" 2>/dev/null || true
+                fail_boot "${name}" "graphical kiosk did not become ready"
+            fi
             kill "${qemu_pid}" 2>/dev/null || true
             wait "${qemu_pid}" 2>/dev/null || true
             elapsed=$(( $(date +%s) - started_at ))
-            printf '%s guest boot passed (%s, %ss).\n' \
-                "${name}" "${expected_trust}" "${elapsed}"
+            printf '%s guest boot passed (%s, %ss). Log: %s\n' \
+                "${name}" "${expected_trust}" "${elapsed}" "${log}"
             return 0
         fi
         if [ "$(date +%s)" -ge "${deadline}" ]; then

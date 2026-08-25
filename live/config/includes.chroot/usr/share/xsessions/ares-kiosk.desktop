@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=ARES OS Kiosk
+Comment=Start the ARES local interface directly
+Exec=/usr/lib/ares/ares-kiosk-session
+TryExec=/usr/lib/ares/ares-kiosk-session
+Type=Application
+DesktopNames=ARES

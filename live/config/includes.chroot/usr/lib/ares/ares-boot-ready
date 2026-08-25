@@ -8,6 +8,7 @@ mode=$(cat /run/ares/mode)
 api=UNAVAILABLE
 ui=UNAVAILABLE
 hardware=UNAVAILABLE
+kiosk=UNAVAILABLE
 attempt=0
 while [ "${attempt}" -lt 120 ]; do
     if [ -s /run/ares/hardware/public/inventory-v1.json ]; then
@@ -22,16 +23,20 @@ while [ "${attempt}" -lt 120 ]; do
         | grep -Fq '<title>ARES'; then
         ui=READY
     fi
-    if [ "${api}" = READY ] && [ "${ui}" = READY ] && [ "${hardware}" = READY ]; then
+    if command -v pgrep >/dev/null 2>&1 && \
+        pgrep -u ares -f 'firefox-esr.*(127[.]0[.]0[.]1:8000|/usr/share/ares/platform/unavailable[.]html)' >/dev/null 2>&1; then
+        kiosk=READY
+    fi
+    if [ "${api}" = READY ] && [ "${ui}" = READY ] && [ "${hardware}" = READY ] && [ "${kiosk}" = READY ]; then
         break
     fi
     attempt=$((attempt + 1))
     sleep 1
 done
 
-if [ "${api}" != READY ] || [ "${ui}" != READY ] || [ "${hardware}" != READY ]; then
-    printf 'ARES_BOOT_FAILED mode=%s trust=%s api=%s ui=%s hardware=%s\n' \
-        "${mode}" "${trust}" "${api}" "${ui}" "${hardware}" > /run/ares/boot-ready
+if [ "${api}" != READY ] || [ "${ui}" != READY ] || [ "${hardware}" != READY ] || [ "${kiosk}" != READY ]; then
+    printf 'ARES_BOOT_FAILED mode=%s trust=%s api=%s ui=%s hardware=%s kiosk=%s\n' \
+        "${mode}" "${trust}" "${api}" "${ui}" "${hardware}" "${kiosk}" > /run/ares/boot-ready
     chmod 0644 /run/ares/boot-ready
     if [ -c /dev/ttyS0 ]; then
         timeout 2 sh -c 'cat /run/ares/boot-ready > /dev/ttyS0' || true
@@ -39,8 +44,8 @@ if [ "${api}" != READY ] || [ "${ui}" != READY ] || [ "${hardware}" != READY ]; 
     exit 1
 fi
 
-printf 'ARES_BOOT_READY mode=%s trust=%s api=%s ui=%s hardware=%s\n' \
-    "${mode}" "${trust}" "${api}" "${ui}" "${hardware}" > /run/ares/boot-ready
+printf 'ARES_BOOT_READY mode=%s trust=%s api=%s ui=%s hardware=%s kiosk=%s\n' \
+    "${mode}" "${trust}" "${api}" "${ui}" "${hardware}" "${kiosk}" > /run/ares/boot-ready
 chmod 0644 /run/ares/boot-ready
 
 if [ -c /dev/ttyS0 ]; then

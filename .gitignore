@@ -36,3 +36,4 @@ iso/*.spdx.json
 live/.build/
 live/.cache/
 live/artwork/generated/
+.vm/

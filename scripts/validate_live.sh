@@ -12,6 +12,7 @@ fail() {
 for required in \
     Makefile \
     scripts/smoke_test_iso.sh \
+    scripts/prepare_ai_bundle.sh \
     scripts/test_boot_integrity.sh \
     scripts/test_reproducible_verity.sh \
     scripts/veritysetup_reproducible.sh \
@@ -146,6 +147,15 @@ fi
 grep -q '^Exec=/usr/lib/ares/ares-kiosk-launch$' \
     "${repo_root}/live/config/includes.chroot/etc/xdg/autostart/ares-kiosk.desktop" \
     || fail 'the kiosk must inherit the active graphical session environment'
+grep -qx 'autologin-session=ares-kiosk' \
+    "${repo_root}/live/config/includes.chroot/etc/lightdm/lightdm.conf.d/50-ares.conf" \
+    || fail 'LightDM must autologin into the dedicated ARES kiosk session'
+grep -qx 'Exec=/usr/lib/ares/ares-kiosk-session' \
+    "${repo_root}/live/config/includes.chroot/usr/share/xsessions/ares-kiosk.desktop" \
+    || fail 'the ARES kiosk X session must launch the dedicated session wrapper'
+grep -Fq 'exec /usr/lib/ares/ares-kiosk-launch' \
+    "${repo_root}/live/config/includes.chroot/usr/lib/ares/ares-kiosk-session" \
+    || fail 'the ARES kiosk session must exec the kiosk launcher'
 grep -q '^fallback_url=file:///usr/share/ares/platform/unavailable.html$' \
     "${repo_root}/live/config/includes.chroot/usr/lib/ares/ares-kiosk-launch" \
     || fail 'the kiosk fallback must be diagnostic rather than a broken API dashboard'
@@ -158,6 +168,12 @@ grep -q '^PrivateDevices=yes$' \
 grep -Fq 'd /var/lib/ares/capabilities 0700 ares-api ares-api -' \
     "${repo_root}/live/config/includes.chroot/usr/lib/tmpfiles.d/ares.conf" \
     || fail 'the private Capability journal directory must be created reproducibly'
+grep -Fq 'd /var/lib/ares 0711 ares-api ares-api -' \
+    "${repo_root}/live/config/includes.chroot/usr/lib/tmpfiles.d/ares.conf" \
+    || fail 'the ARES state root must be traversable by isolated service accounts'
+grep -Fq 'chown -R ares-llm:ares-llm /var/lib/ares/models' \
+    "${repo_root}/live/config/hooks/live/0210-ares-ai-permissions.hook.chroot" \
+    || fail 'the offline model store must be owned recursively by the LLM service'
 grep -Fq '/capabilities/storage.disk-analysis/executions' \
     "${repo_root}/live/config/includes.chroot/usr/share/ares/platform/app.js" \
     || fail 'the local interface must expose the Disk Analysis capability'
@@ -171,12 +187,15 @@ fi
 grep -q 'copy_exec.*libcryptsetup' \
     "${repo_root}/live/config/includes.chroot/etc/initramfs-tools/hooks/ares-verity" \
     || fail 'the initramfs must include libmount dm-verity dlopen dependencies'
-grep -Fq 'api=%s ui=%s hardware=%s' \
+grep -Fq 'api=%s ui=%s hardware=%s kiosk=%s' \
     "${repo_root}/live/config/includes.chroot/usr/lib/ares/ares-boot-ready" \
-    || fail 'the boot marker must prove backend, interface, and hardware readiness'
+    || fail 'the boot marker must prove backend, interface, hardware, and kiosk readiness'
 grep -qx 'SupplementaryGroups=ares-api' \
     "${repo_root}/live/config/includes.chroot/usr/lib/systemd/system/ares-boot-ready.service" \
     || fail 'the capability-free boot marker must be able to traverse the ares-api hardware view'
+grep -qx 'TimeoutStartSec=150s' \
+    "${repo_root}/live/config/includes.chroot/usr/lib/systemd/system/ares-boot-ready.service" \
+    || fail 'the boot-ready marker must have enough time to verify the graphical kiosk'
 grep -q -- '--invalidation-mode checked-hash' \
     "${repo_root}/live/config/hooks/live/0800-ares-python-cache.hook.chroot" \
     || fail 'the backend must have reproducible precompiled bytecode'
@@ -237,6 +256,18 @@ grep -Fq 'ARES_REPRODUCIBLE_COLD_CACHE' \
 grep -Fq 'ARES_KEEP_REPRO_EVIDENCE' \
     "${repo_root}/scripts/verify_reproducible.sh" \
     || fail 'the reproducibility gate must support retained failure evidence'
+grep -Fq 'qwen2.5:1.5b-instruct-q4_K_M' \
+    "${repo_root}/scripts/prepare_ai_bundle.sh" \
+    || fail 'the AI bundle preparer must stage the configured model'
+grep -Fq 'archive_sha256' \
+    "${repo_root}/scripts/prepare_ai_bundle.sh" \
+    || fail 'the AI bundle preparer must pin the runtime archive'
+grep -Fq 'sha256sum --check --strict SHA256SUMS' \
+    "${repo_root}/scripts/prepare_ai_bundle.sh" \
+    || fail 'the AI bundle preparer must verify generated bundle checksums'
+grep -Fq 'model_manifest_path=' \
+    "${repo_root}/scripts/build_live_in_container.sh" \
+    || fail 'the ISO builder must validate the configured AI model manifest with a single shell-safe path'
 grep -Fq '/etc/nvme/hostid' \
     "${repo_root}/live/config/hooks/live/0900-ares-cleanup.hook.chroot" \
     || fail 'the random package-generated NVMe host ID must not enter the Live root'

@@ -1,0 +1,17 @@
+{
+  "architecture": "amd64",
+  "model": {
+    "license": "Apache-2.0",
+    "name": "qwen2.5:1.5b-instruct-q4_K_M",
+    "source": "https://ollama.com/library/qwen2.5:1.5b-instruct-q4_K_M",
+    "upstream_source": "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF"
+  },
+  "runtime": {
+    "archive_sha256": "50539c5fe9bf85887733355098dcdb266b433cb8c73fa180713417e9ed6e42bb",
+    "license": "MIT",
+    "name": "ollama",
+    "source": "https://github.com/ollama/ollama/releases/download/v0.32.15/ollama-linux-amd64.tar.zst",
+    "version": "v0.32.15"
+  },
+  "schema_version": 1
+}

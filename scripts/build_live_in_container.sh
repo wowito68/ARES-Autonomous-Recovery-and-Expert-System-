@@ -117,9 +117,8 @@ if [ -d /workspace/live/models/runtime ] || [ -d /workspace/live/models/store ];
         printf '%s\n' 'The AI runtime must be an amd64 ELF executable.' >&2
         exit 1
     fi
-    if [ ! -s \
-        /workspace/live/models/store/manifests/registry.ollama.ai/library/qwen2.5/1.5b-instruct-q4_K_M
-    ]; then
+    model_manifest_path=/workspace/live/models/store/manifests/registry.ollama.ai/library/qwen2.5/1.5b-instruct-q4_K_M
+    if [ ! -s "${model_manifest_path}" ]; then
         printf '%s\n' 'The offline AI bundle lacks the configured model manifest.' >&2
         exit 1
     fi

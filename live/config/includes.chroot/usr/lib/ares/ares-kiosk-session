@@ -1,0 +1,27 @@
+#!/bin/sh
+set -eu
+
+export XDG_CURRENT_DESKTOP=ARES
+export XDG_SESSION_DESKTOP=ares-kiosk
+export DESKTOP_SESSION=ares-kiosk
+export MOZ_ENABLE_WAYLAND=0
+
+runtime_dir=${XDG_RUNTIME_DIR:-/tmp}
+log_file=${runtime_dir}/ares-kiosk-session.log
+
+{
+    printf 'ARES kiosk session starting: display=%s uid=%s\n' \
+        "${DISPLAY:-missing}" "$(id -u)"
+} > "${log_file}" 2>/dev/null || true
+
+if command -v xfsettingsd >/dev/null 2>&1; then
+    xfsettingsd --daemon >> "${log_file}" 2>&1 || true
+fi
+if command -v xfwm4 >/dev/null 2>&1; then
+    xfwm4 --daemon >> "${log_file}" 2>&1 || true
+fi
+if command -v xfdesktop >/dev/null 2>&1; then
+    xfdesktop >> "${log_file}" 2>&1 &
+fi
+
+exec /usr/lib/ares/ares-kiosk-launch

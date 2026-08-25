@@ -71,6 +71,7 @@ async function requestJson(path, options = {}) {
     if (!response.ok) {
       const error = new Error(body?.detail || `Error HTTP ${response.status}`);
       error.code = body?.code || "HTTP_ERROR";
+      error.detail = body?.detail || body?.title || "";
       throw error;
     }
     return body;
@@ -505,10 +506,16 @@ async function sendChat(event) {
     chatBusy = false;
     setChatAvailability(true, "El texto se procesa dentro de este equipo.");
   } catch (error) {
+    const messages = {
+      AI_MODEL_MISSING: "El modelo configurado no está instalado en esta imagen.",
+      AI_RUNTIME_UNAVAILABLE:
+        "El runtime local no respondió. Espera unos segundos y pulsa Actualizar; si persiste, revisa /run/ares/ai-selftest.json.",
+      AI_INVALID_RESPONSE:
+        "El modelo respondió, pero ARES descartó la respuesta por seguridad.",
+    };
     pending.querySelector("p").textContent =
-      error.code === "AI_MODEL_MISSING"
-        ? "El modelo configurado no está instalado."
-        : "La IA local no pudo responder. Comprueba el estado del runtime.";
+      messages[error.code] ||
+      `La IA local no pudo responder.${error.detail ? ` Detalle: ${error.detail}` : ""}`;
     chatBusy = false;
     await refreshAI();
   }

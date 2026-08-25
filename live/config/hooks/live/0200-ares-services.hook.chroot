@@ -6,6 +6,7 @@ systemd-tmpfiles --create /usr/lib/tmpfiles.d/ares.conf
 
 systemctl enable ares.target
 systemctl enable ares-boot-ready.service
+systemctl enable ares-ai-selftest.service
 systemctl enable ares-hardware-enrichment.timer
 systemctl enable lightdm.service
 systemctl enable nftables.service

@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+"""Exercise the bundled local AI path and leave boot-time evidence."""
+
+from __future__ import annotations
+
+import json
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+API_ROOT = "http://127.0.0.1:8000/api/v1"
+OUT = Path("/run/ares/api/ai-selftest.json")
+SERIAL = Path("/dev/ttyS0")
+BOOT_READY = Path("/run/ares/boot-ready")
+MODEL = "qwen2.5:1.5b-instruct-q4_K_M"
+
+
+def request_json(path: str, payload: dict[str, object] | None = None, timeout: float = 10.0) -> dict[str, object]:
+    data = None
+    headers = {"Accept": "application/json"}
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(f"{API_ROOT}{path}", data=data, headers=headers)
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        body = response.read(1_000_000)
+    parsed = json.loads(body)
+    if not isinstance(parsed, dict):
+        raise RuntimeError("non_object_response")
+    return parsed
+
+
+def emit(marker: str) -> None:
+    print(marker, flush=True)
+    try:
+        if SERIAL.exists():
+            SERIAL.write_text(f"{marker}\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def main() -> int:
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    started = time.time()
+    evidence: dict[str, object] = {
+        "status": "starting",
+        "model": MODEL,
+        "local_only": True,
+        "tools_enabled": False,
+        "started_at_monotonic": started,
+    }
+    try:
+        deadline = time.time() + 180
+        while time.time() < deadline:
+            if BOOT_READY.exists() and "ARES_BOOT_READY " in BOOT_READY.read_text(
+                encoding="utf-8", errors="replace"
+            ):
+                break
+            time.sleep(2)
+        else:
+            raise RuntimeError("boot_ready_timeout")
+
+        status: dict[str, object] | None = None
+        while time.time() < deadline:
+            try:
+                status = request_json("/ai/status", timeout=5.0)
+            except (OSError, urllib.error.URLError, TimeoutError):
+                time.sleep(2)
+                continue
+            if status.get("status") == "ready":
+                break
+            time.sleep(2)
+        if status is None:
+            raise RuntimeError("ai_status_unavailable")
+        if status.get("status") != "ready":
+            raise RuntimeError(str(status.get("status") or "ai_not_ready"))
+
+        chat: dict[str, object] | None = None
+        chat_payload = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Responde solo con la palabra: listo",
+                }
+            ]
+        }
+        while time.time() < deadline:
+            try:
+                chat = request_json("/assistant/chat", chat_payload, timeout=90.0)
+                break
+            except urllib.error.HTTPError as exc:
+                if exc.code not in {503, 504}:
+                    raise
+                time.sleep(5)
+            except (OSError, urllib.error.URLError, TimeoutError):
+                time.sleep(5)
+        if chat is None:
+            raise RuntimeError("chat_timeout")
+
+        content = str(chat.get("content") or "").strip().lower()
+        if "listo" not in content:
+            raise RuntimeError("unexpected_model_response")
+
+        evidence.update(
+            {
+                "status": "ready",
+                "runtime_status": status,
+                "chat_model": chat.get("model"),
+                "done_reason": chat.get("done_reason"),
+                "prompt_tokens": chat.get("prompt_tokens"),
+                "response_tokens": chat.get("response_tokens"),
+                "duration_seconds": round(time.time() - started, 3),
+            }
+        )
+        OUT.write_text(json.dumps(evidence, sort_keys=True), encoding="utf-8")
+        OUT.chmod(0o644)
+        emit(
+            "ARES_AI_SELFTEST status=READY "
+            f"model={chat.get('model')} duration={evidence['duration_seconds']}"
+        )
+        return 0
+    except Exception as exc:  # noqa: BLE001 - stable boot evidence, not traceback leakage.
+        evidence.update(
+            {
+                "status": "failed",
+                "error": exc.__class__.__name__,
+                "reason": str(exc)[:160],
+                "duration_seconds": round(time.time() - started, 3),
+            }
+        )
+        OUT.write_text(json.dumps(evidence, sort_keys=True), encoding="utf-8")
+        OUT.chmod(0o644)
+        emit(
+            "ARES_AI_SELFTEST status=FAILED "
+            f"error={evidence['error']} reason={evidence['reason']}"
+        )
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

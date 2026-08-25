@@ -10,6 +10,8 @@ log_file=${runtime_dir}/ares-kiosk.log
 {
     printf 'ARES kiosk startup: display=%s session=%s\n' \
         "${DISPLAY:-missing}" "${XDG_CURRENT_DESKTOP:-unknown}"
+    printf 'ARES kiosk user: uid=%s gid=%s runtime=%s\n' \
+        "$(id -u)" "$(id -g)" "${runtime_dir}"
 } > "${log_file}" 2>/dev/null || true
 
 attempts=0
@@ -23,4 +25,9 @@ while [ "${attempts}" -lt 120 ]; do
 done
 
 printf 'ARES kiosk URL: %s\n' "${selected_url}" >> "${log_file}" 2>/dev/null || true
-exec firefox-esr --kiosk --private-window --no-remote "${selected_url}"
+exec firefox-esr \
+    --kiosk \
+    --private-window \
+    --no-remote \
+    --new-instance \
+    "${selected_url}"

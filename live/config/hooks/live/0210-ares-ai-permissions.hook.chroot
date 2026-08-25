@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+
+if [ -d /var/lib/ares/models ]; then
+    chown -R ares-llm:ares-llm /var/lib/ares/models
+    find /var/lib/ares/models -type d -exec chmod 0750 {} +
+    find /var/lib/ares/models -type f -exec chmod 0640 {} +
+fi

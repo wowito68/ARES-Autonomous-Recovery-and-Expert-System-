@@ -60,9 +60,14 @@ licencia; rechaza symlinks, archivos no declarados, archivos declarados
 ausentes y hashes incorrectos; y normaliza la propiedad al usuario aislado
 `ares-llm`. No existe descarga en boot.
 
+El paquete de desarrollo se genera con `make prepare-ai-bundle`. Ese comando
+usa el release Linux amd64 de Ollama fijado por SHA-256, descarga
+`qwen2.5:1.5b-instruct-q4_K_M` mediante un servidor temporal enlazado solo a
+loopback y deja los pesos listos para la siguiente `make build-iso`.
+
 La configuración inicial apunta a
 `qwen2.5:1.5b-instruct-q4_K_M` por su tamaño contenido, pero los pesos no se
-incluyen aún. Antes de distribuirlos se debe fijar:
+incluyen en Git. Antes de distribuir una imagen pública se debe fijar:
 
 - fuente y versión exactas;
 - digest de runtime, manifiestos y blobs;

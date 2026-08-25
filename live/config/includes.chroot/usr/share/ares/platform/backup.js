@@ -41,7 +41,7 @@
     let section = document.getElementById("backups-section");
     if (section) return section;
 
-    section = element("section", "panel");
+    section = element("section", "section-block auxiliary-section");
     section.id = "backups-section";
     section.dataset.aresSection = "backups";
     section.append(element("h2", "", "Backups"));
@@ -97,7 +97,7 @@
 
     const nav = document.querySelector("nav");
     if (nav && !document.querySelector('[href="#backups-section"]')) {
-      const link = element("a", "", "Backups");
+      const link = element("a", "nav-link", "Backups");
       link.href = "#backups-section";
       nav.append(link);
     }

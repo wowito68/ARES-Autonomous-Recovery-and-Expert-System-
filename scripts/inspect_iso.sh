@@ -85,9 +85,15 @@ for runtime_path in \
     opt/ares/backend/src/ares/knowledge/graph.py \
     opt/ares/backend/src/ares/planner/engine.py \
     opt/ares/backend/src/ares/reasoning/engine.py \
+    opt/ares/llm/bin/ares-llm \
+    opt/ares/llm/runtime/bin/ollama \
+    usr/share/ares/ai/BUNDLE.json \
+    var/lib/ares/models/manifests/registry.ollama.ai/library/qwen2.5/1.5b-instruct-q4_K_M \
     usr/lib/ares/ares-boot-integrity \
     usr/lib/ares/ares-hardware-boot \
     usr/lib/ares/ares-kiosk-launch \
+    usr/lib/ares/ares-kiosk-session \
+    usr/share/xsessions/ares-kiosk.desktop \
     usr/share/ares/platform/index.html \
     usr/share/ares/platform/app.js \
     usr/share/ares/platform/unavailable.html; do
@@ -126,11 +132,43 @@ grep -qx 'ReadOnlyPaths=/run/ares/hardware/public' \
 grep -qx 'ReadWritePaths=/var/lib/ares /run/ares/api' \
     "${temp_dir}/ares-backend.service" \
     || { printf '%s\n' 'The ISO backend write paths are not confined.' >&2; exit 1; }
+grep -qx 'Environment=ARES_AI_MODEL=qwen2.5:1.5b-instruct-q4_K_M' \
+    "${temp_dir}/ares-backend.service" \
+    || { printf '%s\n' 'The ISO backend is not configured for the bundled AI model.' >&2; exit 1; }
+unsquashfs -cat "${temp_dir}/filesystem.squashfs" \
+    usr/lib/systemd/system/ares-llm.service > "${temp_dir}/ares-llm.service"
+grep -qx 'Environment=OLLAMA_MODELS=/var/lib/ares/models' \
+    "${temp_dir}/ares-llm.service" \
+    || { printf '%s\n' 'The ISO LLM service does not use the bundled model store.' >&2; exit 1; }
+grep -qx 'IPAddressDeny=any' "${temp_dir}/ares-llm.service" \
+    || { printf '%s\n' 'The ISO LLM service is not network-confined.' >&2; exit 1; }
+grep -qx 'IPAddressAllow=localhost' "${temp_dir}/ares-llm.service" \
+    || { printf '%s\n' 'The ISO LLM service is not restricted to loopback.' >&2; exit 1; }
+unsquashfs -cat "${temp_dir}/filesystem.squashfs" \
+    opt/ares/llm/bin/ares-llm > "${temp_dir}/ares-llm"
+grep -Fq 'LD_LIBRARY_PATH="/opt/ares/llm/runtime/lib/ollama' \
+    "${temp_dir}/ares-llm" \
+    || { printf '%s\n' 'The ISO LLM wrapper does not expose bundled runtime libraries.' >&2; exit 1; }
+unsquashfs -cat "${temp_dir}/filesystem.squashfs" \
+    usr/share/ares/ai/BUNDLE.json > "${temp_dir}/BUNDLE.json"
+grep -Eq '"name"[[:space:]]*:[[:space:]]*"qwen2\.5:1\.5b-instruct-q4_K_M"' \
+    "${temp_dir}/BUNDLE.json" \
+    || { printf '%s\n' 'The ISO AI bundle metadata does not identify the model.' >&2; exit 1; }
+grep -Eq '"version"[[:space:]]*:[[:space:]]*"v0\.32\.15"' "${temp_dir}/BUNDLE.json" \
+    || { printf '%s\n' 'The ISO AI bundle metadata does not identify the runtime version.' >&2; exit 1; }
 unsquashfs -cat "${temp_dir}/filesystem.squashfs" \
     usr/lib/tmpfiles.d/ares.conf > "${temp_dir}/ares.tmpfiles"
 grep -Fqx 'd /var/lib/ares/capabilities 0700 ares-api ares-api -' \
     "${temp_dir}/ares.tmpfiles" \
     || { printf '%s\n' 'The ISO lacks the protected capability state directory.' >&2; exit 1; }
+grep -Fqx 'd /var/lib/ares 0711 ares-api ares-api -' \
+    "${temp_dir}/ares.tmpfiles" \
+    || { printf '%s\n' 'The ISO state root blocks isolated service traversal.' >&2; exit 1; }
+if unsquashfs -ll "${temp_dir}/filesystem.squashfs" var/lib/ares/models 2>/dev/null \
+    | awk '$NF ~ "^squashfs-root/var/lib/ares/models(/|$)" && $2 != "977/977" { found=1 } END { exit found ? 0 : 1 }'; then
+    printf '%s\n' 'The ISO model store is not recursively owned by ares-llm.' >&2
+    exit 1
+fi
 unsquashfs -cat "${temp_dir}/filesystem.squashfs" \
     usr/share/ares/platform/app.js > "${temp_dir}/app.js"
 grep -Fq '/capabilities/storage.disk-analysis/executions' "${temp_dir}/app.js" \
@@ -141,6 +179,18 @@ if grep -Eq '(^|[,{[:space:]])command[[:space:]]*:' "${temp_dir}/app.js"; then
     printf '%s\n' 'The ISO interface sends forbidden command input to a capability.' >&2
     exit 1
 fi
+unsquashfs -cat "${temp_dir}/filesystem.squashfs" \
+    etc/lightdm/lightdm.conf.d/50-ares.conf > "${temp_dir}/lightdm.conf"
+grep -qx 'autologin-session=ares-kiosk' "${temp_dir}/lightdm.conf" \
+    || { printf '%s\n' 'The ISO does not autologin into the ARES kiosk session.' >&2; exit 1; }
+unsquashfs -cat "${temp_dir}/filesystem.squashfs" \
+    usr/share/xsessions/ares-kiosk.desktop > "${temp_dir}/ares-kiosk.desktop"
+grep -qx 'Exec=/usr/lib/ares/ares-kiosk-session' "${temp_dir}/ares-kiosk.desktop" \
+    || { printf '%s\n' 'The ISO kiosk X session does not launch the session wrapper.' >&2; exit 1; }
+unsquashfs -cat "${temp_dir}/filesystem.squashfs" \
+    usr/lib/ares/ares-boot-ready > "${temp_dir}/ares-boot-ready"
+grep -Fq 'api=%s ui=%s hardware=%s kiosk=%s' "${temp_dir}/ares-boot-ready" \
+    || { printf '%s\n' 'The ISO boot marker does not verify graphical kiosk readiness.' >&2; exit 1; }
 unsquashfs -cat "${temp_dir}/filesystem.squashfs" \
     usr/lib/systemd/system/ares-boot-integrity.service \
     > "${temp_dir}/ares-boot-integrity.service"
@@ -170,6 +220,8 @@ grep -qx 'SupplementaryGroups=ares-api' "${temp_dir}/ares-boot-ready.service" \
             'The ISO boot marker cannot traverse the protected public hardware inventory.' >&2
         exit 1
     }
+grep -qx 'TimeoutStartSec=150s' "${temp_dir}/ares-boot-ready.service" \
+    || { printf '%s\n' 'The ISO boot marker lacks a kiosk-aware timeout.' >&2; exit 1; }
 unsquashfs -cat "${temp_dir}/filesystem.squashfs" \
     usr/lib/systemd/system/ares-hardware.service > "${temp_dir}/ares-hardware.service"
 grep -qx 'TimeoutStartSec=30s' "${temp_dir}/ares-hardware.service" \
