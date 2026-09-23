@@ -24,18 +24,30 @@
 
   async function loadResources() {
     const select = document.getElementById("agent-resource");
+    const destination = document.getElementById("agent-destination-resource");
     if (!select) return;
     if (window.AresResources) {
       await window.AresResources.fillSelect(select, {
         blankLabel: "ARES elegirá si no hay ambigüedad",
         selectRecommended: true,
       });
+      if (destination) {
+        await window.AresResources.fillSelect(destination, {
+          blankLabel: "Sin destino de backup",
+          selectRecommended: false,
+        });
+      }
       return;
     }
     const catalog = await request("/resources");
     select.replaceChildren();
     select.append(el("option", "", "ARES elegirá si no hay ambigüedad"));
     select.firstChild.value = "";
+    if (destination) {
+      destination.replaceChildren();
+      destination.append(el("option", "", "Sin destino de backup"));
+      destination.firstChild.value = "";
+    }
     for (const resource of catalog.resources || []) {
       const option = el(
         "option",
@@ -45,6 +57,11 @@
       option.value = resource.resource_id;
       if (resource.recommended) option.selected = true;
       select.append(option);
+      if (destination) {
+        const copy = option.cloneNode(true);
+        copy.selected = false;
+        destination.append(copy);
+      }
     }
   }
 
@@ -65,17 +82,20 @@
       summary.append(el("strong", "", "Limitaciones reales"), list);
     }
     target.append(summary);
+    if (run.proposal) target.append(renderProposal(run.proposal));
+    if (run.authorization_envelope) target.append(renderEnvelope(run));
 
     for (const step of run.steps || []) {
       const block = el("div", "capability-card");
       block.append(el("h3", "", `${step.state} · ${step.objective}`));
-      block.append(el("p", "", `Capability: ${step.capability_id || "ninguna"} · Riesgo: ${step.risk}`));
+      block.append(el("p", "", `Acción planificada · Riesgo ${step.risk}`));
       block.append(el("p", "muted", `Autorización: ${step.requires_authorization ? "requerida" : "no"} · Protección: ${step.requires_protection ? "requerida" : "no"}`));
       if (step.action) {
         const details = el("details");
-        details.append(el("summary", "", "Ver comandos y detalles técnicos"));
+        details.append(el("summary", "", "Detalles técnicos"));
         const list = el("ul", "finding-list");
         for (const line of step.action.command_summary || []) list.append(el("li", "", line));
+        list.append(el("li", "", `Capability interna: ${step.capability_id || "ninguna"}`));
         list.append(el("li", "", `Clase: ${step.action.operation_class}`));
         list.append(el("li", "", `Cambios esperados: ${step.action.expected_changes}`));
         details.append(list);
@@ -86,17 +106,18 @@
       }
       target.append(block);
     }
+    if ((run.timeline || []).length) target.append(renderTimeline(run.timeline));
 
     const controls = el("div", "topbar-actions wrap-actions");
-    if (run.state === "READ_ONLY_AUTHORIZATION_REQUIRED") {
+    if (run.state === "READ_ONLY_AUTHORIZATION_REQUIRED" || run.state === "MUTATION_AUTHORIZATION_REQUIRED") {
       target.append(renderAuthorizationRequest(run));
     }
     if (run.state === "PLAN_READY") {
-      const execute = el("button", "", "Ejecutar revisión autorizada");
+      const execute = el("button", "", "Continuar operación autorizada");
       execute.addEventListener("click", executeRun);
       controls.append(execute);
     }
-    if (!["COMPLETED", "PARTIAL", "FAILED", "CANCELLED", "INVALIDATED"].includes(run.state)) {
+    if (!["COMPLETED", "PARTIAL", "FAILED", "CANCELLED", "INVALIDATED", "EXPIRED"].includes(run.state)) {
       const cancel = el("button", "secondary-button", "Cancelar");
       cancel.addEventListener("click", cancelRun);
       controls.append(cancel);
@@ -104,12 +125,59 @@
     if (controls.children.length) target.append(controls);
   }
 
+  function renderProposal(proposal) {
+    const card = el("div", "capability-card");
+    card.append(el("h3", "", "Propuesta del agente"));
+    card.append(el("p", "", proposal.goal_interpretation || "ARES interpretó el objetivo."));
+    card.append(el("p", "muted", `Confianza ${Math.round((proposal.confidence || 0) * 100)}% · fuente ${proposal.source || "backend"}`));
+    if ((proposal.hypotheses || []).length) {
+      const list = el("ul", "finding-list");
+      for (const item of proposal.hypotheses) list.append(el("li", "", item));
+      card.append(el("strong", "", "Hipótesis"), list);
+    }
+    if (proposal.needs_user_input && proposal.user_question) {
+      card.append(el("p", "banner warning", proposal.user_question));
+    }
+    return card;
+  }
+
+  function renderEnvelope(run) {
+    const envelope = run.authorization_envelope;
+    const card = el("div", "capability-card");
+    card.append(el("h3", "", "Alcance autorizado"));
+    const facts = el("dl", "authorization-facts");
+    const entries = [
+      ["Estado", envelope.status],
+      ["Riesgo máximo", envelope.risk_ceiling],
+      ["Escritura máxima", `${formatBytes(envelope.maximum_bytes_written || 0)}`],
+      ["Borrado máximo", `${formatBytes(envelope.maximum_bytes_deleted || 0)}`],
+      ["Red", envelope.network_policy || "disabled"],
+      ["Vence", envelope.expires_at || "—"],
+    ];
+    for (const [key, value] of entries) {
+      const wrapper = el("div");
+      wrapper.append(el("dt", "", key), el("dd", "", value || "—"));
+      facts.append(wrapper);
+    }
+    card.append(facts);
+    const details = el("details");
+    details.append(el("summary", "", "Alcance técnico"));
+    const list = el("ul", "finding-list");
+    for (const item of envelope.allowed_capabilities || []) list.append(el("li", "", `Capability: ${item}`));
+    for (const item of envelope.verification_requirements || []) list.append(el("li", "", `Verificación: ${item}`));
+    list.append(el("li", "", `Fingerprint del plan: ${envelope.plan_fingerprint}`));
+    details.append(list);
+    card.append(details);
+    return card;
+  }
+
   function renderAuthorizationRequest(run) {
     const selected = (run.resources || []).find(
       (resource) => resource.resource_id === run.selected_resource_id,
     );
     const card = el("div", "authorization-card");
-    card.append(el("h3", "", "ARES solicita autorización"));
+    const mutating = run.state === "MUTATION_AUTHORIZATION_REQUIRED";
+    card.append(el("h3", "", mutating ? "ARES solicita autorización de backup" : "ARES solicita autorización"));
     card.append(el("p", "", "Plan propuesto. Todavía no se ha ejecutado."));
 
     const facts = el("dl", "authorization-facts");
@@ -121,9 +189,14 @@
           ? `${selected.human_name} · ${selected.technical_path || "sin ruta técnica visible"}`
           : "ARES usará el entorno de recuperación si no hay ambigüedad.",
       ],
-      ["Nivel de riesgo", "Solo lectura · bajo"],
-      ["Cambios esperados", "Ninguno en discos, particiones, GRUB ni sistema instalado."],
-      ["Duración de autorización", "5 minutos, un solo uso, ligada a este plan y destino."],
+      ["Nivel de riesgo", mutating ? "Backup · medio" : "Solo lectura · bajo"],
+      [
+        "Cambios esperados",
+        mutating
+          ? "Crear una carpeta nueva de backup en el destino seleccionado; borrado automático no autorizado."
+          : "Ninguno en discos, particiones, GRUB ni sistema instalado.",
+      ],
+      ["Duración de autorización", "Un solo uso, ligada al plan, recursos y fingerprints actuales."],
     ];
     for (const [key, value] of entries) {
       const wrapper = el("div");
@@ -138,14 +211,14 @@
         el(
           "li",
           "",
-          `${step.objective} · ${step.capability_id || "sin capability"} · ${step.risk}`,
+          `${step.objective} · riesgo ${step.risk}`,
         ),
       );
     }
     card.append(el("strong", "", "Acciones que se realizarán"), actions);
 
     const details = el("details");
-    details.append(el("summary", "", "Ver comandos y detalles técnicos"));
+    details.append(el("summary", "", "Detalles técnicos"));
     const technical = el("ul", "finding-list");
     for (const step of run.steps || []) {
       for (const line of step.action?.command_summary || []) {
@@ -153,12 +226,16 @@
       }
       technical.append(el("li", "", `${step.id}: privilegios=${step.action?.privileged ? "sí" : "no"} · cambios=${step.action?.expected_changes || "Ninguno"}`));
     }
-    technical.append(el("li", "", "La autorización de diagnóstico no autoriza reparaciones."));
+    technical.append(el("li", "", mutating ? "La autorización de backup no autoriza reparaciones." : "La autorización de diagnóstico no autoriza reparaciones."));
     technical.append(el("li", "", "Si cambia el destino, fingerprint o plan, el backend invalida la autorización."));
     details.append(technical);
     card.append(details);
 
-    const phrase = el("p", "form-hint", "Para autorizar, pulsa el botón. El backend enviará la frase contextual: AUTORIZO SOLO LECTURA.");
+    const phrase = el(
+      "p",
+      "form-hint",
+      `Para autorizar, pulsa el botón. El backend enviará la frase contextual: ${mutating ? "AUTORIZO BACKUP" : "AUTORIZO SOLO LECTURA"}.`,
+    );
     const controls = el("div", "topbar-actions wrap-actions");
     const authorize = el("button", "", "Autorizar");
     authorize.addEventListener("click", authorizeRun);
@@ -167,6 +244,29 @@
     controls.append(authorize, cancel);
     card.append(phrase, controls);
     return card;
+  }
+
+  function renderTimeline(timeline) {
+    const card = el("div", "capability-card");
+    card.append(el("h3", "", "Bitácora de ejecución"));
+    const list = el("ul", "finding-list");
+    for (const item of timeline) {
+      list.append(el("li", "", `${item.at || "—"} · ${item.state}: ${item.reason}`));
+    }
+    card.append(list);
+    return card;
+  }
+
+  function formatBytes(value) {
+    if (!Number.isFinite(value) || value <= 0) return "0 B";
+    const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let size = value;
+    let index = 0;
+    while (size >= 1024 && index < units.length - 1) {
+      size /= 1024;
+      index += 1;
+    }
+    return `${size.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
   }
 
   function renderResult(block, result) {
@@ -217,20 +317,29 @@
     event.preventDefault();
     const objective = document.getElementById("agent-objective")?.value.trim();
     const resource = document.getElementById("agent-resource")?.value || null;
+    const destination = document.getElementById("agent-destination-resource")?.value || null;
     if (!objective) return;
     setAgentBadge("pending", "Creando AgentRun");
     const run = await request("/agent/runs", {
       method: "POST",
-      body: JSON.stringify({ objective, resource_id: resource || null }),
+      body: JSON.stringify({
+        objective,
+        resource_id: resource || null,
+        destination_resource_id: destination || null,
+      }),
     });
     renderRun(run);
   }
 
   async function authorizeRun() {
     if (!currentRun) return;
-    const run = await request(`/agent/runs/${encodeURIComponent(currentRun.id)}/authorize-read-only`, {
+    const mutating = currentRun.state === "MUTATION_AUTHORIZATION_REQUIRED";
+    const run = await request(`/agent/runs/${encodeURIComponent(currentRun.id)}/${mutating ? "authorize-mutation" : "authorize-read-only"}`, {
       method: "POST",
-      body: JSON.stringify({ confirm: true, understood: "AUTORIZO SOLO LECTURA" }),
+      body: JSON.stringify({
+        confirm: true,
+        understood: mutating ? "AUTORIZO BACKUP" : "AUTORIZO SOLO LECTURA",
+      }),
     });
     renderRun(run);
   }
@@ -238,7 +347,7 @@
   async function executeRun() {
     if (!currentRun) return;
     setAgentBadge("pending", "Ejecutando backend");
-    const run = await request(`/agent/runs/${encodeURIComponent(currentRun.id)}/execute`, {
+    const run = await request(`/agent/runs/${encodeURIComponent(currentRun.id)}/continue`, {
       method: "POST",
       body: "{}",
       timeout: 120000,

@@ -29,4 +29,4 @@ IPAddressDeny=any
 IPAddressAllow=localhost
 
 [Install]
-WantedBy=ares.target
+WantedBy=graphical.target

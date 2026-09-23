@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import tempfile
+from contextlib import suppress
 from pathlib import Path
 
 from ares.agent.models import AgentRun
@@ -65,13 +66,13 @@ class AgentRunStore:
                 os.fsync(handle.fileno())
             os.replace(temporary, self.directory / f"{run.id}.json")
         finally:
-            try:
+            with suppress(FileNotFoundError):
                 os.unlink(temporary)
-            except FileNotFoundError:
-                pass
 
 
 def _safe_id(value: str) -> bool:
-    return bool(value) and len(value) <= 64 and all(
-        char.isalnum() or char in {"-", "_"} for char in value
+    return (
+        bool(value)
+        and len(value) <= 64
+        and all(char.isalnum() or char in {"-", "_"} for char in value)
     )
