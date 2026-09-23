@@ -255,9 +255,13 @@ class AgentOrchestrator:
         backend_plan = self.planner.plan(
             ReasoningRequest(goal=_planner_goal(request.objective), evidence=evidence)
         )
-        steps = [_storage_step(selected, evidence)]
-        if boot_goal:
-            steps.append(_boot_step(selected, evidence))
+        steps = list(
+            _diagnostic_steps(
+                request.objective,
+                target_resource_id=selected.resource_id if selected else None,
+                evidence_ids=tuple(item.id for item in evidence),
+            )
+        )
         run = AgentRun(
             objective=request.objective,
             state=AgentRunState.READ_ONLY_AUTHORIZATION_REQUIRED,
@@ -523,6 +527,11 @@ class AgentOrchestrator:
             authorization = ReadOnlyAuthorization(
                 run_id=run.id,
                 step_ids=tuple(step.id for step in run.steps if step.requires_authorization),
+                capability_ids=tuple(
+                    step.capability_id
+                    for step in run.steps
+                    if step.requires_authorization and step.capability_id is not None
+                ),
                 resource_fingerprints=current_fingerprints,
                 granted_by=operator,
                 objective=run.objective,
@@ -713,9 +722,69 @@ class AgentOrchestrator:
                     else step
                     for step in completed_steps
                 ]
+        other_failed = False
+        for step in running.steps:
+            capability_id = step.capability_id
+            if capability_id in {None, "storage.disk-analysis", "boot.diagnose"}:
+                continue
+            payload = _capability_payload(
+                capability_id,
+                snapshot_id=analysis.snapshot_id,
+                target_resource_id=running.selected_resource_id,
+            )
+            record = self._invocation_started(
+                running, step.id, capability_id, envelope, payload
+            )
+            invocations.append(record)
+            try:
+                execution = await self.capabilities.execute(capability_id, payload)
+                if (
+                    getattr(execution.status, "value", execution.status) != "succeeded"
+                    or execution.result is None
+                ):
+                    raise AgentOrchestratorError(
+                        execution.error_code or "DIAGNOSTIC_CAPABILITY_FAILED"
+                    )
+                invocations[-1] = record.model_copy(
+                    update={
+                        "finished_at": datetime.now(UTC),
+                        "status": "SUCCEEDED",
+                        "verification_status": "VERIFIED",
+                        "evidence_ids": (analysis.snapshot_id,),
+                    }
+                )
+                completed_steps = [
+                    item.model_copy(
+                        update={"state": AgentStepState.COMPLETED, "result": execution.result}
+                    )
+                    if item.id == step.id
+                    else item
+                    for item in completed_steps
+                ]
+            except Exception as exc:
+                other_failed = True
+                error_code = getattr(exc, "code", "DIAGNOSTIC_CAPABILITY_FAILED")
+                invocations[-1] = record.model_copy(
+                    update={
+                        "finished_at": datetime.now(UTC),
+                        "status": "FAILED",
+                        "verification_status": "FAILED",
+                        "error_code": error_code,
+                    }
+                )
+                completed_steps = [
+                    item.model_copy(
+                        update={"state": AgentStepState.FAILED, "error_code": error_code}
+                    )
+                    if item.id == step.id
+                    else item
+                    for item in completed_steps
+                ]
         refreshed = await self.resources.catalog()
         final_state = (
-            AgentRunState.PARTIAL if running.limitations or boot_failed else AgentRunState.COMPLETED
+            AgentRunState.PARTIAL
+            if running.limitations or boot_failed or other_failed
+            else AgentRunState.COMPLETED
         )
         consumed_envelope = envelope.model_copy(
             update={
@@ -1157,6 +1226,176 @@ class AgentOrchestrator:
                 payload={"run_id": run.id, **payload},
             )
         )
+
+
+def _diagnostic_steps(
+    objective: str,
+    *,
+    target_resource_id: str | None,
+    evidence_ids: tuple[str, ...],
+) -> tuple[AgentPlanStep, ...]:
+    requested = _requested_capabilities(objective)
+    details: dict[str, dict[str, object]] = {
+        "storage.disk-analysis": {
+            "step_id": "collect-storage-evidence",
+            "objective": "Detectar discos, particiones, filesystems y sistemas instalados.",
+            "summary": (
+                "Ejecutar probes pasivos allowlisted de almacenamiento.",
+                "Persistir snapshot local de ARES.",
+                "Actualizar Knowledge Graph local.",
+            ),
+            "result": "Snapshot estructurado de almacenamiento y diagnóstico inicial.",
+            "verification": "El workflow debe producir snapshot_id mediante evidencia real.",
+            "dependencies": (),
+        },
+        "storage.space-analysis": {
+            "step_id": "analyze-storage-space",
+            "objective": "Medir capacidad, inodos y categorías que consumen espacio sin borrar.",
+            "summary": (
+                "Consultar statvfs del target resuelto por ARES.",
+                "Recorrer metadatos con límites, sin seguir symlinks ni leer contenido personal.",
+                "Estimar categorías recuperables sin ejecutar limpieza.",
+            ),
+            "result": "SpaceAnalysisResult con consumidores, estimaciones y limitaciones.",
+            "verification": "El resultado debe incluir fingerprint, evidencia y métricas tipadas.",
+            "dependencies": ("collect-storage-evidence",),
+        },
+        "system.memory-analysis": {
+            "step_id": "analyze-system-memory",
+            "objective": "Distinguir presión real, caché, swap y evidencia histórica OOM.",
+            "summary": (
+                "Normalizar métricas /proc únicamente para el runtime accesible.",
+                "Separar explícitamente evidencia histórica de un target offline.",
+                "No terminar procesos, vaciar cachés ni cambiar sysctl.",
+            ),
+            "result": "MemoryAnalysisResult con scope runtime u offline inequívoco.",
+            "verification": "No debe atribuir métricas actuales a un sistema offline.",
+            "dependencies": ("collect-storage-evidence",),
+        },
+        "packages.health-check": {
+            "step_id": "check-package-health",
+            "objective": "Revisar coherencia dpkg/APT sin red, locks de escritura ni scripts.",
+            "summary": (
+                "Leer metadatos locales dpkg/APT de forma acotada.",
+                "Detectar estados incompletos y actualizaciones interrumpidas.",
+                "No ejecutar apt update, install, remove ni dpkg --configure.",
+            ),
+            "result": "PackageHealthResult con estado y evidencia normalizada.",
+            "verification": "El target debe conservarse sin cambios y sin conexiones de red.",
+            "dependencies": ("collect-storage-evidence",),
+        },
+        "services.failure-analysis": {
+            "step_id": "analyze-service-failures",
+            "objective": "Identificar unidades fallidas y evidencia persistente sin reiniciarlas.",
+            "summary": (
+                "Consultar el estado systemd con una invocación fija allowlisted.",
+                "Tratar logs y nombres de unidad como datos no confiables.",
+                "No reiniciar, habilitar, deshabilitar ni modificar servicios.",
+            ),
+            "result": "ServiceFailureResult con unidades y hallazgos acotados.",
+            "verification": "La salida debe estar normalizada y libre de comandos arbitrarios.",
+            "dependencies": ("collect-storage-evidence",),
+        },
+        "boot.diagnose": {
+            "step_id": "diagnose-boot",
+            "objective": "Diagnosticar evidencia de arranque sin modificar GRUB ni NVRAM.",
+            "summary": (
+                "Leer snapshot de almacenamiento persistido por ARES.",
+                "Determinar firmware UEFI/BIOS desde evidencia local.",
+                "Identificar sistemas instalados, candidatos EFI y GRUB visible.",
+            ),
+            "result": "BootDiagnosticResult con hallazgos, evidencia y limitaciones.",
+            "verification": "El workflow debe producir findings tipados sin reparar.",
+            "dependencies": ("collect-storage-evidence",),
+        },
+    }
+    steps: list[AgentPlanStep] = []
+    for capability_id in requested:
+        item = details[capability_id]
+        steps.append(
+            AgentPlanStep(
+                id=str(item["step_id"]),
+                objective=str(item["objective"]),
+                state=AgentStepState.AUTHORIZATION_REQUIRED,
+                capability_id=capability_id,
+                target_resource_id=target_resource_id,
+                prerequisites=("Target identificado por ARES y autorización contextual vigente.",),
+                risk="low",
+                requires_authorization=True,
+                requires_protection=False,
+                action=TechnicalAction(
+                    capability_id=capability_id,
+                    operation_class="observe",
+                    risk="low",
+                    privileged=True,
+                    command_summary=tuple(item["summary"]),  # type: ignore[arg-type]
+                    expected_changes="Ninguno sobre el target; solo evidencia local de ARES.",
+                ),
+                expected_result=str(item["result"]),
+                verification=str(item["verification"]),
+                rollback_strategy="No aplica: diagnóstico de solo lectura.",
+                dependencies=tuple(item["dependencies"]),  # type: ignore[arg-type]
+                evidence=evidence_ids,
+            )
+        )
+    return tuple(steps)
+
+
+def _requested_capabilities(objective: str) -> tuple[str, ...]:
+    lowered = objective.casefold()
+    comprehensive = any(
+        term in lowered
+        for term in (
+            "diagnóstico completo",
+            "diagnostico completo",
+            "analiza todo",
+            "salud del sistema",
+        )
+    )
+    requested = ["storage.disk-analysis"]
+    groups = (
+        (
+            "storage.space-analysis",
+            (
+                "espacio",
+                "disco lleno",
+                "archivos grandes",
+                "liberar",
+                "caché",
+                "cache",
+                "disk usage",
+            ),
+        ),
+        ("system.memory-analysis", ("memoria", " ram", "swap", "oom", "memory")),
+        (
+            "packages.health-check",
+            ("paquete", "apt", "dpkg", "dependencia", "actualización", "actualizacion"),
+        ),
+        (
+            "services.failure-analysis",
+            ("servicio", "systemd", "daemon", "unidades fallidas", "failed service"),
+        ),
+        ("boot.diagnose", ("arranque", "no inicia", "boot", "grub", "uefi", "bios")),
+    )
+    for capability_id, terms in groups:
+        if comprehensive or any(term in lowered for term in terms):
+            requested.append(capability_id)
+    return tuple(requested)
+
+
+def _capability_payload(
+    capability_id: str,
+    *,
+    snapshot_id: str | None,
+    target_resource_id: str | None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "snapshot_id": snapshot_id,
+        "target_resource_id": target_resource_id,
+    }
+    if capability_id == "storage.space-analysis":
+        payload["analysis_depth"] = "standard"
+    return payload
 
 
 def _storage_step(
