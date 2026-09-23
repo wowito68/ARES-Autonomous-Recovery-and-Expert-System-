@@ -291,6 +291,7 @@ class StorageToolSuite:
             fallback = self._read_boot_inventory()
             if fallback:
                 devices = fallback
+                mounts = _mounts_from_inventory_devices(fallback)
                 warnings.append("using_boot_inventory_fallback")
             else:
                 errors.append("block_device_evidence_unavailable")
@@ -552,6 +553,33 @@ def parse_findmnt_json(text: str) -> tuple[MountProbe, ...]:
             )
         )
     return tuple(output)
+
+
+def _mounts_from_inventory_devices(
+    devices: tuple[BlockDeviceProbe, ...],
+) -> tuple[MountProbe, ...]:
+    """Recover passive mount evidence from the signed boot inventory fallback."""
+
+    output: list[MountProbe] = []
+    for device in devices:
+        for target in device.mountpoints[:32]:
+            if not target.startswith("/") or "\x00" in target:
+                continue
+            try:
+                resolved = Path(target).resolve(strict=True)
+            except OSError:
+                continue
+            if not resolved.is_dir():
+                continue
+            output.append(
+                MountProbe(
+                    source=device.path,
+                    target=str(resolved),
+                    filesystem_type=device.filesystem_type,
+                    options=("ro",) if device.read_only else (),
+                )
+            )
+    return tuple(output[:512])
 
 
 def parse_df_output(text: str) -> tuple[UsageProbe, ...]:

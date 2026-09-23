@@ -29,6 +29,17 @@
 | `GET /api/v1/knowledge/graph` | Snapshot versionado del Knowledge Graph |
 | `GET /api/v1/storage/disks` | Discos del último snapshot Storage persistido |
 | `POST /api/v1/storage/analyze` | Vertical slice completo `storage.disk-analysis` + diagnóstico |
+
+Diagnósticos read-only adicionales instalados en el catálogo:
+
+- `storage.space-analysis`
+- `system.memory-analysis`
+- `packages.health-check`
+- `services.failure-analysis`
+- `boot.diagnose`
+
+Los contratos, alcances y límites se documentan en
+[`capabilities/read-only-diagnostic-analysis.md`](capabilities/read-only-diagnostic-analysis.md).
 | `GET /api/v1/storage/snapshots/{id}` | Recupera un `SystemStorageSnapshot` |
 | `GET /api/v1/diagnostics/{id}` | Recupera un `DiagnosticResult` |
 

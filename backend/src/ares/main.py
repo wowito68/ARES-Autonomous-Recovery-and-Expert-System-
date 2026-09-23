@@ -23,6 +23,7 @@ from ares.capabilities import CapabilityManager, discover_plugins
 from ares.capabilities.plugins import (
     BackupPlugin,
     BootDiagnosticsPlugin,
+    DiagnosticAnalysisPlugin,
     DiskAnalysisPlugin,
     FilesystemRepairPlugin,
     StoragePartitionPlugin,
@@ -32,6 +33,7 @@ from ares.core.logging import configure_logging
 from ares.core.middleware import RequestContextMiddleware
 from ares.core.problems import install_problem_handlers
 from ares.database import Database
+from ares.diagnostic_capabilities import DiagnosticToolSuite, ReadOnlyDiagnosticProcessRunner
 from ares.diagnostics import DiagnosticStore
 from ares.events import EventBus, JsonlEventSink
 from ares.filesystems.executor import (
@@ -119,6 +121,10 @@ def create_app(
         runner=storage_runner,
         process_probes_enabled=resolved_settings.storage_process_probes_enabled,
     )
+    diagnostic_tools = DiagnosticToolSuite(
+        snapshot_store,
+        runner=ReadOnlyDiagnosticProcessRunner(SafeProcessRunner()),
+    )
     backup_tools = BackupFilesystemTools()
     backup_executor: BackupExecutor
     audit_ledger: AuditLedger
@@ -162,6 +168,7 @@ def create_app(
     )
     builtins = (
         DiskAnalysisPlugin(storage_tools, snapshot_store),
+        DiagnosticAnalysisPlugin(diagnostic_tools),
         BootDiagnosticsPlugin(snapshot_store),
         BackupPlugin(backup_store, backup_tools, backup_executor),
         FilesystemRepairPlugin(filesystem_store, filesystem_executor),
