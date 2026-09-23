@@ -725,16 +725,17 @@ class AgentOrchestrator:
         other_failed = False
         for step in running.steps:
             capability_id = step.capability_id
-            if capability_id in {None, "storage.disk-analysis", "boot.diagnose"}:
+            if capability_id is None or capability_id in {
+                "storage.disk-analysis",
+                "boot.diagnose",
+            }:
                 continue
             payload = _capability_payload(
                 capability_id,
                 snapshot_id=analysis.snapshot_id,
                 target_resource_id=running.selected_resource_id,
             )
-            record = self._invocation_started(
-                running, step.id, capability_id, envelope, payload
-            )
+            record = self._invocation_started(running, step.id, capability_id, envelope, payload)
             invocations.append(record)
             try:
                 execution = await self.capabilities.execute(capability_id, payload)
